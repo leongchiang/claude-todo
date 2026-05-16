@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 
-import { NotFoundError, ValidationError } from "./errors";
+import { NotFoundError, PiiRejectedError, ValidationError } from "./errors";
 import {
   ListTasksOptsSchema,
   type ListTasksResult,
@@ -12,6 +12,7 @@ import {
   UpsertUserInputSchema,
   type User,
 } from "./models";
+import { detectPii } from "./pii";
 
 export type Db = Database.Database;
 
@@ -25,6 +26,17 @@ const SCHEMA = `
     created_at TEXT NOT NULL,
     UNIQUE (provider, provider_user_id)
   );
+
+  CREATE TABLE IF NOT EXISTS pats (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    last_used_at TEXT,
+    created_at TEXT NOT NULL,
+    deleted_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_pats_user_active ON pats(user_id, deleted_at);
 
   CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -66,6 +78,11 @@ export function getDb(): Db {
   return defaultDb;
 }
 
+/** Test-only: drop the cached singleton so the next `getDb()` re-resolves. */
+export function _resetDefaultDbForTesting(): void {
+  defaultDb = undefined;
+}
+
 interface TaskRow {
   id: string;
   user_id: string;
@@ -99,6 +116,14 @@ function validateNewTask(input: NewTaskInput): NewTaskInput {
 
 export function addTask(db: Db, userId: string, input: NewTaskInput): Task {
   const validated = validateNewTask(input);
+
+  // PII rejection at the storage boundary (defense in depth; the API layer
+  // also rejects earlier so we can return a clean 400).
+  const titlePii = detectPii(validated.title);
+  if (titlePii.found) throw new PiiRejectedError(titlePii.type);
+  const notesPii = detectPii(validated.notes ?? null);
+  if (notesPii.found) throw new PiiRejectedError(notesPii.type);
+
   const id = randomUUID();
   const createdAt = new Date().toISOString();
 
@@ -180,20 +205,27 @@ export function listTasks(db: Db, userId: string, opts: ListInput): ListTasksRes
 }
 
 export function markDone(db: Db, taskId: string, userId: string): Task {
-  const completedAt = new Date().toISOString();
+  return updateTaskStatus(db, taskId, userId, "done");
+}
+
+export function updateTaskStatus(
+  db: Db,
+  taskId: string,
+  userId: string,
+  status: "open" | "done",
+): Task {
+  const completedAt = status === "done" ? new Date().toISOString() : null;
   const result = db
     .prepare(
       `UPDATE tasks
-       SET status = 'done', completed_at = ?
+       SET status = ?, completed_at = ?
        WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
     )
-    .run(completedAt, taskId, userId);
+    .run(status, completedAt, taskId, userId);
 
   if (result.changes === 0) {
     throw new NotFoundError(`task ${taskId} not found`);
   }
-
-  // getTask cannot return null here because the row exists (we just updated it).
   return getTask(db, taskId, userId) as Task;
 }
 

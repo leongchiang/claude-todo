@@ -16,3 +16,13 @@ export class ValidationError extends Error {
 export class NotFoundError extends Error {
   override name = "NotFoundError";
 }
+
+export class PiiRejectedError extends Error {
+  override name = "PiiRejectedError";
+  readonly piiType: string;
+
+  constructor(piiType: string) {
+    super(`task content rejected — contains ${piiType}`);
+    this.piiType = piiType;
+  }
+}

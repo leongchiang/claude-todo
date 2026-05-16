@@ -34,7 +34,7 @@ The "What we asked Claude Code" sections are the heart of this tutorial. The goa
 - [Chapter 6 — Scaffolding the project](#chapter-6--scaffolding-the-project) ✅
 - [Chapter 7 — Storage layer with TDD](#chapter-7--storage-layer-with-tdd) ✅
 - [Chapter 8 — Google + Microsoft SSO](#chapter-8--google--microsoft-sso) ✅
-- [Chapter 9 — The public REST API](#chapter-9--the-public-rest-api) ⏳
+- [Chapter 9 — The public REST API](#chapter-9--the-public-rest-api) ✅
 - [Chapter 10 — OpenAPI docs](#chapter-10--openapi-docs) ⏳
 - [Chapter 11 — AI features with prompt engineering](#chapter-11--ai-features-with-prompt-engineering) ⏳
 - [Chapter 12 — Responsive web UI](#chapter-12--responsive-web-ui) ⏳
@@ -377,9 +377,89 @@ What's *not* tested in CI yet:
 
 ---
 
-## Chapter 9 — The public REST API ⏳
+## Chapter 9 — The public REST API ✅
 
-*Will cover: Route Handlers, unifying session + Bearer auth, Zod input validation, the consistent error shape, rate limiting, PATs (issue/verify/revoke), and how to test API contracts.*
+### Goal
+Every public endpoint the spec lists, minus the AI ones (Chapter 11). Auth, validation, error envelope, rate limit, PATs — all of it. The shape that Chapter 10 (OpenAPI) will read from and Chapter 12 (web UI) will consume.
+
+### Decisions
+
+- **One auth resolver, Bearer-first.** `resolveUser(req)` checks `Authorization: Bearer <PAT>` before NextAuth's session. If a Bearer is present but invalid, we return 401 — we do *not* fall through to the session. Mixing valid cookie + stale Bearer was a surprise vector waiting to happen.
+- **PATs are session-only to *manage*.** A PAT can call `/api/v1/tasks`, but it cannot call `POST /api/v1/pats` to issue more PATs. Matches the spec (§12: "session only" for /pats), prevents privilege escalation, and the test names it explicitly.
+- **Token format `ctd_[A-Z2-7]{22}`.** Base32 (Crockford-friendly alphabet), 110 bits of entropy after the prefix, fixed 26-char length so the regex doubles as a validator. Plaintext shown once; DB stores SHA-256 hash only. The `prefix` is purely cosmetic — useful for users to identify their tokens in `/api/v1/pats` listings.
+- **Soft-delete everywhere, never 403.** Revoking your own PAT → 204. Revoking someone else's → 404 (never 403 — TC-PAT-09 makes the point explicitly: don't leak existence). Same rule for tasks (TC-API-08).
+- **In-memory rate limit, process-local.** 60 req/min/user in a `Map`. Honest scope: this works on a single instance and falls over with multiple replicas. Chapter 15's deploy is a single Azure App Service instance, so it holds — but the chapter calls it out so nobody puts this in a serious deployment.
+- **PII rejection at *two* boundaries.** API handler returns 400 with `{ error: "pii_rejected", type }`. Storage also rejects (`PiiRejectedError`). Defense in depth: any future caller that bypasses the handler (background job, CLI) still can't write PII to disk.
+- **Mapped error envelope.** One `mapError(error)` translates `NotFoundError` → 404, `PiiRejectedError` → 400 pii_rejected, `ValidationError` / `ZodError` → 400 validation_error with field issues, anything else → 500 with a logged `request_id`. Every handler is `try { … } catch (e) { return mapError(e); }`. Result: handlers stay flat; the envelope stays uniform.
+- **PATCH accepts only `status`.** No title/notes editing in the MVP. The spec doesn't ask for it, and adding it now would expand the PII surface. Easy to extend later.
+- **Test handlers via Bearer, not session.** All API-level tests authenticate with a PAT issued in `setupApiTest()`. TC-API-14 asserts the equivalence; we trust it for the rest.
+
+### What we asked Claude Code
+
+Same pattern: "Chapter 9. Tasks/PATs/me endpoints, PII, rate limit, errors. Per TEST_CASES §5, §7, §11." Six files of code, four test files, 36 new tests. One sentence brief.
+
+Things worth flagging:
+
+- **The session-only restriction on PAT management was the agent's call, not mine.** I would have written it the same way, but I hadn't specified it in the brief. Claude read PRODUCT_SPEC.md §12 (`Auth: session only`) and propagated it into the handlers. A real example of why pre-written spec docs amplify agentic work — they're context the model gets to use even when you forget to remind it.
+- **The auth resolver bit twice.** First: I forgot that `getServerSession()` throws when there's no NextAuth request context — every test hit 500 instead of 401. Fix: try/catch around the session resolver. Second: a 401-via-invalid-Bearer falling through to session is bad UX. Fix: explicit early-return on bad Bearer instead of falling through. Both fixes are 3 lines; both would have shipped silently if the tests hadn't been written first.
+- **NextRequest in vitest is a plain Web `Request`.** The route handlers take `NextRequest`, but `NextRequest extends Request` and we only call `req.url`, `req.headers`, `req.json()`. So tests construct a plain `Request` and cast. Cleaner than spinning up Next.js's full request runtime.
+- **Biome's `--fix --unsafe` reordered imports inside test files.** The PostToolUse hook caught the format issues but skipped one organize-imports nudge. The `--unsafe` flag is fine for an OSS tutorial — every fix is checked into git, easy to revert. I'd be more careful in a production repo.
+
+### Output
+
+Branch `feat/public-api` → PR.
+
+**11 new files:**
+- `lib/pii.ts`, `lib/pats.ts`, `lib/api-auth.ts`, `lib/api-errors.ts`, `lib/ratelimit.ts`
+- `app/api/v1/me/route.ts`
+- `app/api/v1/tasks/route.ts`, `app/api/v1/tasks/[id]/route.ts`
+- `app/api/v1/pats/route.ts`, `app/api/v1/pats/[id]/route.ts`
+- `tests/helpers/api.ts` (shared fixture: temp DB + seeded user + issued PAT + Bearer headers)
+- 5 new test files (`pii`, `pats`, `api-me`, `api-tasks`, `api-pats`, `api-auth-and-limits`)
+
+**3 modified:**
+- `lib/storage.ts` — `pats` table to schema, `updateTaskStatus`, PII check in `addTask`, `_resetDefaultDbForTesting`
+- `lib/models.ts`, `lib/errors.ts` — `PiiRejectedError`
+
+**Test totals:**
+```
+Test Files  10 passed (10)
+     Tests  71 passed (71)
+```
+
+Coverage:
+```
+All files      |   93.24 |    92.18 |   95.34 |   93.24
+ pats.ts       |     100 |      100 |     100 |     100
+ pii.ts        |     100 |      100 |     100 |     100
+ ratelimit.ts  |     100 |      100 |     100 |     100
+ api-auth.ts   |     100 |    77.77 |     100 |     100
+ api-errors.ts |   81.25 |    78.57 |     100 |   81.25
+ auth.ts       |   55.55 |     100  |     50  |   55.55  (NextAuth callbacks; tested via integration)
+```
+
+**Build:**
+```
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/auth/[...nextauth]
+├ ƒ /api/v1/me
+├ ƒ /api/v1/pats
+├ ƒ /api/v1/pats/[id]
+├ ƒ /api/v1/tasks
+└ ƒ /api/v1/tasks/[id]
+```
+
+### Lessons
+
+- **One `mapError` keeps handlers boring.** Every Route Handler is the same shape: `try { auth → rate limit → work; return json } catch (e) { return mapError(e) }`. Boring is a feature: a reviewer can scan a new handler in 5 seconds and know what's *not* there.
+- **A shared test fixture pays back fast.** `setupApiTest()` is 30 lines and 4 test files use it. The harness creates a temp DB, seeds a user, issues a real PAT, and returns the Bearer header. Each test calls it in `beforeEach`. Total setup boilerplate per test: 4 lines.
+- **The agent will pick up restrictions you forgot to brief.** Claude propagated "Auth: session only" from the spec to the PAT endpoints without me saying so. The lesson isn't "trust the agent" — it's "if you put a constraint in the spec, the agent will find it; if you didn't write it down anywhere, the agent will guess."
+- **`getServerSession` throws without a request context.** Wrap it. Every NextAuth tutorial assumes you're calling it from a real Next.js request — but unit tests aren't, server-side scripts aren't, and the failure mode is a 500 instead of a clean 401. Defensive `try`/`catch` is correct here, not paranoid.
+- **An invalid Bearer should NOT fall through to a valid session.** `Authorization: Bearer …` is the user saying "I'm authenticating with this token." Honoring it even when it's wrong (by silently using the cookie) is a security smell. Fail loudly when the asserted credential is broken.
+- **In-memory rate limit is fine *as long as you say so*.** The chapter spends a sentence flagging "process-local, single-instance only." Skipping that line is how Heisenbug rate-limit bugs end up in production.
+- **Unit-test handlers as functions, not as servers.** Importing the exported `GET` / `POST` directly and feeding them `new Request(...)` is fast, deterministic, and skips the entire Next.js runtime. 71 tests run in <500ms. Playwright will cover the wiring layer in Chapter 13.
 
 ---
 
@@ -457,4 +537,4 @@ What's *not* tested in CI yet:
 
 ---
 
-*Last updated: 2026-05-16 — through Chapter 8 (SSO wired, 24 tests; OAuth flow requires manual provider setup).*
+*Last updated: 2026-05-16 — through Chapter 9 (public REST API live, 71 tests, 93% coverage).*

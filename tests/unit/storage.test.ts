@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { NotFoundError, ValidationError } from "@/lib/errors";
+import { NotFoundError, PiiRejectedError, ValidationError } from "@/lib/errors";
 import { addTask, getTask, listTasks, markDone, openDb, softDelete } from "@/lib/storage";
 
 let tmpDir: string;
@@ -137,6 +137,19 @@ describe("validation", () => {
   it("TC-S-11: notes > 2000 chars rejected", () => {
     const long = "x".repeat(2001);
     expect(() => addTask(db(), "u1", { title: "ok", notes: long })).toThrow(ValidationError);
+  });
+});
+
+describe("PII rejection at storage boundary", () => {
+  it("TC-P-07: addTask with email in notes throws PiiRejectedError, nothing persisted", () => {
+    expect(() => addTask(db(), "u1", { title: "ok", notes: "contact bob@bob.com" })).toThrow(
+      PiiRejectedError,
+    );
+    expect(listTasks(db(), "u1", { status: "all" }).items).toEqual([]);
+  });
+
+  it("addTask with PII in the title is rejected too", () => {
+    expect(() => addTask(db(), "u1", { title: "call +65 9123 4567" })).toThrow(PiiRejectedError);
   });
 });
 
