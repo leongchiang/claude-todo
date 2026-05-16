@@ -36,7 +36,7 @@ The "What we asked Claude Code" sections are the heart of this tutorial. The goa
 - [Chapter 8 — Google + Microsoft SSO](#chapter-8--google--microsoft-sso) ✅
 - [Chapter 9 — The public REST API](#chapter-9--the-public-rest-api) ✅
 - [Chapter 10 — OpenAPI docs](#chapter-10--openapi-docs) ⏳
-- [Chapter 11 — AI features with prompt engineering](#chapter-11--ai-features-with-prompt-engineering) ⏳
+- [Chapter 11 — AI features with prompt engineering](#chapter-11--ai-features-with-prompt-engineering) ✅
 - [Chapter 12 — Responsive web UI](#chapter-12--responsive-web-ui) ⏳
 - [Chapter 13 — Claude Code superpowers: skills, subagents, MCP, hooks](#chapter-13--claude-code-superpowers-skills-subagents-mcp-hooks) ⏳
 - [Chapter 14 — CI/CD with GitHub Actions](#chapter-14--cicd-with-github-actions) ⏳
@@ -469,9 +469,73 @@ Route (app)
 
 ---
 
-## Chapter 11 — AI features with prompt engineering ⏳
+## Chapter 11 — AI features with prompt engineering ✅
 
-*Will cover: writing the v1 (naive) prompt, identifying its problems, iterating to v2 (XML-structured, role, examples, output schema), implementing prompt caching, testing with mocked SDK responses, and the per-user cost ceiling enforcement.*
+### Goal
+Wire two Claude-powered endpoints — `/api/v1/tasks/prioritize` and `/api/v1/tasks/summary` — onto the API skeleton from Chapter 9. The interesting part isn't the SDK call; it's the discipline around it: prompt structure (v1 → v2), caching, cost ceiling, audit logging, graceful degradation, and parsing model output as if you don't trust it.
+
+### Decisions
+
+- **Default model: `claude-haiku-4-5-20251001`.** CLAUDE.md §5.1 commits us; the `claude-api` skill agrees Haiku is the right tier for "rank a short list" and "write three sentences." Sonnet/Opus override at the call site if a chapter ever needs more, but neither feature does.
+- **Prompt caching by structure, even when the prompt is under the threshold.** Haiku 4.5's minimum cacheable prefix is **4096 tokens** — our prompts are smaller, so caching won't *actually* fire today. We use the cache-aware shape anyway (stable system block with `cache_control: ephemeral`, volatile task list in `messages[]`). The structure is correct; the win activates once the prompt grows. CLAUDE.md §5.2 was carrying the Sonnet-era "1024 tokens" number; updated to a per-model table in this chapter.
+- **Cost ceiling enforced as a precheck, not a hard limit.** Before any SDK call: estimate the worst case (`max_tokens * output_rate`) and reject if `current + estimate > $0.10`. Concurrent calls can each pass the precheck and combine over the ceiling — fine for a tutorial cap, the ledger UPSERT is atomic, and TC-AI-10 verifies that.
+- **Cost stored as integer micros, never floats.** `1 micro = $1e-6`; $0.10 = `100,000` micros. Float-cents accumulation drifts; integer micros doesn't. The cost-display layer divides by 1M at the boundary.
+- **Per-user, per-day ledger keyed `(user_id, day)` in UTC.** Local-time day boundaries would couple billing to timezones — fine for one user, surprise for everyone else.
+- **Two test hooks, no `vi.mock`.** `_setAnthropicClientForTesting()` swaps in a stub client; `_setAuditLoggerForTesting()` captures audit lines into memory instead of writing to `logs/`. Both reset in `afterEach`. Cleaner than module-level mocks because every test sees a known starting state and the production code path is unchanged.
+- **Bearer-first auth is fine for AI endpoints.** Unlike `/pats`, there's no privilege-escalation argument for session-only. A PAT can prioritize its owner's tasks.
+- **JSON output via prompt instruction, not `output_config.format`.** Haiku 4.5 supports schema-enforced outputs, and a `v3` of prioritize should use it. We deliberately kept prompt-based JSON for v2 because the v1 → v2 narrative is *about* prompt engineering. The chapter calls it out as a known followup.
+- **Parse hardening at three layers.** The model is asked to return only JSON; the parser tolerates a stray code-fence anyway (TC-PR-04 reality); a second pass validates IDs against the input set and rank uniqueness (TC-PR-05, TC-PR-06). Defense in depth.
+- **Empty-state shortcuts before the SDK call.** Zero open tasks → `prioritize` returns `[]` without a call. Zero done-today tasks → `summary` returns the literal "No tasks completed yet today." Saves money and dodges the failure mode where the model hallucinates activity for an empty input.
+
+### What we asked Claude Code
+
+For this chapter I invoked the `claude-api` skill before writing code. The skill is opinionated about caching layout (stable first, volatile last), pricing math (cache writes 1.25×, reads 0.1×), and using typed SDK exceptions. It also shipped a 4 KB-vs-1 KB minimum-cacheable-prefix table that turned out to be the chapter's main correction — our CLAUDE.md §5.2 was wrong for Haiku.
+
+Two patterns from the skill I leaned on:
+
+- **"Stable content first, breakpoint, then volatile."** The system prompt holds persona + schema + examples + guardrails (cacheable). The user message holds the task list (volatile). This isn't just a perf detail — it's also how you keep the prompt audit-able: change a guardrail and only the system block moves; change a task and only the user message moves.
+- **"Verify cache hit rate > 0 on the second call."** Adapted to Haiku: verify *once the prompt clears the threshold*. We can't verify above 0 today because we're below the floor; the test verifies the SDK is *called with* `cache_control`, which is what we control. CLAUDE.md was updated to make the conditional explicit.
+
+What surprised me about the AI-feature work:
+
+- **The prompt-engineering arc is more teachable than the code arc.** `lib/ai/prioritize.ts` is 130 lines, half of which is paranoid parsing. `prompts/prioritize_v1.md` → `_v2.md` is two files plus a README, and that's where the chapter's value sits. The code mostly enforces what the prompt promised.
+- **`AiUnavailableError` covers two distinct failure modes.** Missing env var (developer error, 503 with `reason: "missing_api_key"`) and Anthropic API down (operational error, 503 with `reason: "api_error"`). Same status, different `reason` field. Took a beat to land on this — initially had them as separate error classes; collapsed because the response shape is the same.
+- **Empty-state short-circuits are quietly important.** Letting Claude see "you completed 0 tasks today" invites hallucination ("You had a thoughtful day of reflection..."). Better to never make the call.
+
+### Output
+
+Branch `feat/ai-features` → PR.
+
+**New files (13):**
+- `lib/ai/client.ts` — SDK wrapper with caching, cost ceiling, audit logger
+- `lib/ai/prioritize.ts`, `lib/ai/summary.ts` — feature implementations
+- `app/api/v1/tasks/prioritize/route.ts`, `summary/route.ts` — route handlers
+- `prompts/prioritize_v1.md`, `prioritize_v2.md`, `summary_v1.md`, `summary_v2.md`, `README.md` — the v1→v2 narrative
+- Four test files: `ai-client`, `ai-prioritize`, `ai-summary`, `api-ai` (27 new tests)
+
+**Modified (4):**
+- `lib/storage.ts` — `ai_daily_costs` table, `getDailyCostMicros` / `recordAiCost` / `todayUtc`
+- `lib/errors.ts` — `AiUnavailableError`, `CostCeilingExceededError`, `AiResponseParseError`, `AiResponseInvalidError`
+- `lib/api-errors.ts` — map the new errors to 503 / 429 / 502
+- `CLAUDE.md` §5.2 — per-model cache threshold table
+
+**Build routes:** 10 → 12 (`prioritize`, `summary` added).
+
+**Test totals:**
+```
+Test Files  14 passed (14)
+     Tests  98 passed (98)   ← +27 over Chapter 10
+```
+
+### Lessons
+
+- **Default behavior under threshold is silent failure.** Below Haiku 4.5's 4096-token minimum cacheable prefix, `cache_control: ephemeral` markers do *nothing* and emit no warning. The CLAUDE.md update is the load-bearing fix: future contributors will see the threshold table and not waste time debugging a "broken cache" that was never going to cache at this size.
+- **Estimate-then-deny ceiling is the cheap, correct shape.** Don't deny based on past cost alone (lets one expensive call push you over). Don't try to predict input tokens (small constant). Estimate `max_tokens × output_rate` and deny if `current + estimate > cap`. Simple, conservative, and the tests pin the contract.
+- **Two test hooks beats `vi.mock` for a wrapper module.** `_setAnthropicClientForTesting` and `_setAuditLoggerForTesting` are 6 lines combined. `vi.mock('@anthropic-ai/sdk')` is one line but pollutes the module graph and surprises future contributors who add a real call. The hooks are visible, isolated, and reset cleanly.
+- **The v1 prompt isn't a strawman.** A real attempt at "rank these tasks, return JSON" with no schema, no examples, no guardrails produces the failure modes documented in `prioritize_v1.md`. The v2 wins are concrete: schema, few-shot, XML sections, guardrails. Worth showing both, side-by-side, in the repo — that's the artifact a forker actually learns from.
+- **Hallucination-resistant parsing has three layers, none redundant.** Layer 1: prompt asks for ONLY JSON. Layer 2: parser tolerates a stray code-fence (because layer 1 occasionally fails). Layer 3: domain invariants (IDs from input, ranks unique 1..N). Drop any layer and a specific class of model misbehavior reaches production.
+- **Audit log structure matters more than the technology choice.** JSONL appended to `logs/ai_calls.jsonl` is unfashionable but: grepp-able, tail-able, no DB schema migration, no observability vendor. The constraint that makes it valuable is "metadata only, never prompt or response bodies" — that's enforced in the wrapper at one point, and the TC-AI-03 test asserts the body string doesn't appear in any audit line.
+- **Skill invocation paid off.** The `claude-api` skill caught the cache-threshold mismatch and supplied pricing constants verbatim. The 20 minutes of skill loading was cheaper than rediscovering the table during integration. Worth setting up *before* implementation, not after debugging.
 
 ---
 
@@ -537,4 +601,4 @@ Route (app)
 
 ---
 
-*Last updated: 2026-05-16 — through Chapter 9 (public REST API live, 71 tests, 93% coverage).*
+*Last updated: 2026-05-16 — through Chapter 11 (AI features wired: prioritize + summary, 98 tests; OpenAPI spec from Chapter 10 still pending merge to main).*

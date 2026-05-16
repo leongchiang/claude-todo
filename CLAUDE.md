@@ -150,8 +150,13 @@ Generic best practices for any AI-augmented app — not tied to any organization
 - Centralize model selection in `lib/ai/client.ts`.
 
 ### 5.2 Prompt caching
-- Any system prompt > ~1024 tokens MUST use `cache_control: { type: "ephemeral" }`.
-- Verify cache hit rate > 0 on the second call in any new feature — if it's still 0, the cache config is wrong.
+- Any system prompt likely to exceed the model's minimum cacheable prefix MUST use `cache_control: { type: "ephemeral" }` on the stable portion.
+- **Minimum cacheable prefix is model-specific.** Below the threshold, caching silently fails (no error; `cache_creation_input_tokens: 0`):
+  - **Haiku 4.5, Opus 4.5, Opus 4.6, Opus 4.7:** 4096 tokens
+  - **Sonnet 4.6:** 2048 tokens
+  - **Sonnet 4.5 and earlier:** 1024 tokens
+- Use the cache structure (stable system block + volatile user message) even when the prompt is currently under threshold — the structure is correct, and the win activates once prompts grow.
+- Verify cache hit rate > 0 on the second call in any new feature once the prompt clears the threshold. If it's still 0 above the threshold, the cache config is wrong (silent invalidator — see Chapter 11).
 
 ### 5.3 Cost ceiling
 - Hard cap per user per day: **USD 0.10** for this POC (cheap to enforce, prevents runaway costs from bad prompts or abuse).
