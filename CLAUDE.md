@@ -18,18 +18,18 @@ License: MIT. Repository: personal GitHub (public).
 
 ## 2. Tech Stack `[EDIT]`
 
-- Node.js 20 LTS, TypeScript (strict mode)
-- Next.js 14+ (App Router) — Server Components, Server Actions, Route Handlers
-- React + Tailwind CSS (mobile-first)
-- NextAuth (Auth.js v5) — Google + Microsoft OAuth/OIDC
+- Node.js 20 LTS or newer (developed on Node 24), TypeScript 5 (strict mode + `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes` + `noImplicitOverride`)
+- Next.js 16 (App Router, Turbopack) — Server Components, Server Actions, Route Handlers
+- React 19 + Tailwind CSS v4 (mobile-first)
+- NextAuth (Auth.js) **v4 stable** — Google + Microsoft OAuth/OIDC. Not v5 beta: stable contracts trump newer features for a tutorial.
 - `better-sqlite3` for storage
 - Zod for runtime validation
 - `@asteasolutions/zod-to-openapi` to generate OpenAPI 3.1 spec
-- Scalar for the public API docs UI at `/api/docs`
+- Scalar (`@scalar/nextjs-api-reference`) for the public API docs UI at `/api/docs`
 - `@anthropic-ai/sdk` for Claude calls
 - Vitest + Playwright for tests
 - Biome for lint + format
-- pnpm for packages
+- pnpm 11 for packages — note: pnpm 11 gates package build scripts via `pnpm-workspace.yaml` (`allowBuilds:`). Entries must be resolved to literal `true`/`false`, or every subsequent pnpm command fails.
 
 ---
 
@@ -328,4 +328,4 @@ For your own app:
 
 ---
 
-*Last updated: 2026-05-14 (v0.3 — personal OSS, MIT, Azure POC, SSO + API-first)*
+*Last updated: 2026-05-16 (v0.4 — pinned actual tech-stack versions after scaffold)*
