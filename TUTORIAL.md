@@ -35,7 +35,7 @@ The "What we asked Claude Code" sections are the heart of this tutorial. The goa
 - [Chapter 7 — Storage layer with TDD](#chapter-7--storage-layer-with-tdd) ✅
 - [Chapter 8 — Google + Microsoft SSO](#chapter-8--google--microsoft-sso) ✅
 - [Chapter 9 — The public REST API](#chapter-9--the-public-rest-api) ✅
-- [Chapter 10 — OpenAPI docs](#chapter-10--openapi-docs) ⏳
+- [Chapter 10 — OpenAPI docs](#chapter-10--openapi-docs) ✅
 - [Chapter 11 — AI features with prompt engineering](#chapter-11--ai-features-with-prompt-engineering) ⏳
 - [Chapter 12 — Responsive web UI](#chapter-12--responsive-web-ui) ⏳
 - [Chapter 13 — Claude Code superpowers: skills, subagents, MCP, hooks](#chapter-13--claude-code-superpowers-skills-subagents-mcp-hooks) ⏳
@@ -463,9 +463,75 @@ Route (app)
 
 ---
 
-## Chapter 10 — OpenAPI docs ⏳
+## Chapter 10 — OpenAPI docs ✅
 
-*Will cover: registering Zod schemas with `zod-to-openapi`, generating the OpenAPI 3.1 spec at build time, serving it at `/api/openapi.json` and `/api/openapi.yaml`, mounting Scalar UI at `/api/docs`, validating the spec with Spectral in CI.*
+### Goal
+The API from Chapter 9 is invisible to anyone who can't read the source. This chapter makes it visible: an OpenAPI 3.1 spec generated from the same Zod schemas the handlers use, plus a browsable Scalar UI.
+
+### Decisions
+
+- **Generate fresh on every request, no build-time export.** `buildOpenApiDocument()` runs in the GET handler. Total time: ~1 ms. Dev-server schema edits show up immediately — no `pnpm openapi` step to forget. Production cost is negligible compared to a single DB query.
+- **Zod schemas as the source of truth, but response shapes live in `lib/openapi.ts`, not `lib/models.ts`.** `MeResponse`, `TaskListResponse`, `IssuedPat` etc. are API-only — they don't belong with the storage layer's models. Splitting at this boundary keeps `models.ts` about *data* and `openapi.ts` about *contract*.
+- **`registry.register("Name", schema)` over `.openapi("Name")` chaining.** Functionally equivalent — both rely on the same prototype patch — but the explicit form makes naming a first-class decision instead of buried metadata on a schema definition.
+- **YAML route via the `yaml` package.** 4 KB dep, well-maintained, handles round-tripping cleanly. The "JSON is YAML so just serve JSON" trick is correct but disrespects callers who'd grep the spec by eye. TC-OAS-04 wants YAML to *look* like YAML; that's worth a dependency.
+- **Scalar UI mounted at `/api/docs`, no auth.** The docs reference is public — the protected operations are still gated. Anyone can browse; only authenticated users can call. Matches the spec.
+- **Server URL takes `PUBLIC_BASE_URL`, then `NEXTAUTH_URL`, then localhost.** TC-OAS-06 wants the prod server URL when deployed; we already have `NEXTAUTH_URL` set in prod for OAuth callbacks, so reusing it avoids a second env var most of the time. `PUBLIC_BASE_URL` overrides if the API host differs from the OAuth callback host.
+
+### What we asked Claude Code
+
+Same one-sentence pattern: "Chapter 10. OpenAPI 3.1 spec from the Zod schemas, JSON + YAML routes, Scalar UI at /api/docs."
+
+The interesting part of this chapter wasn't the code — it was a 20-minute debugging detour into module systems.
+
+**The detour:** `extendZodWithOpenApi(z)` patches `z.ZodType.prototype` so schemas get an `.openapi()` method. The recommended setup calls it at the top of the module that uses the registry (`lib/openapi.ts`). That's what we did. Tests failed with `TypeError: zodSchema.openapi is not a function` from inside `registry.register()`.
+
+Root cause: vitest's runtime loaded `@asteasolutions/zod-to-openapi` as CJS and `lib/models.ts` (via Vite's TS pipeline) as ESM. Each loaded zod through a different module record. **Two different `ZodType` classes, two different prototypes.** `extendZodWithOpenApi` patched the CJS one; our schemas were instances of the ESM one. The patch was real and invisible at the same time.
+
+Fix: move `extendZodWithOpenApi(z)` to the top of `lib/models.ts` — the module that *creates* the schemas. Whichever zod runtime makes them is the one that gets patched. One-line change, three-minute fix once diagnosed, twenty minutes to diagnose. Saved to memory so the next time someone adds a `lib/something-from-zod.ts` they don't repeat it.
+
+What I'd want the agent to do differently: when a "TypeError: not a function" hits a method that's *supposed* to exist via prototype extension, jump to module-system inspection earlier. Standalone-Node sanity check (the `node -e` snippet I ran) is one minute of work and rules out half the hypothesis space.
+
+### Output
+
+11 new tests, 1 schema source rearrangement, 4 new files. PR stacked on `feat/public-api` (auto-retargets to main on merge).
+
+**Files:**
+- `lib/openapi.ts` — registry + 9 paths + 2 security schemes + generator
+- `app/api/openapi.json/route.ts` — JSON spec
+- `app/api/openapi.yaml/route.ts` — YAML via `yaml`
+- `app/api/docs/route.ts` — Scalar UI (`@scalar/nextjs-api-reference`)
+- `tests/unit/openapi.test.ts` — 9 tests for TC-OAS-01..04, 06
+- `lib/models.ts` modified — `extendZodWithOpenApi(z)` at the top
+
+**Build routes (10 total):**
+```
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/auth/[...nextauth]
+├ ƒ /api/docs
+├ ƒ /api/openapi.json
+├ ƒ /api/openapi.yaml
+├ ƒ /api/v1/me
+├ ƒ /api/v1/pats
+├ ƒ /api/v1/pats/[id]
+├ ƒ /api/v1/tasks
+└ ƒ /api/v1/tasks/[id]
+```
+
+**Tests:**
+```
+Test Files  11 passed (11)
+     Tests  80 passed (80)   ← +9 OpenAPI tests
+```
+
+### Lessons
+
+- **Where you call a side-effect matters more than what it does.** `extendZodWithOpenApi(z)` runs the same code regardless of which module hosts it; what differs is *which zod runtime* gets patched. Same lesson as Chapter 8's `next build` env-var trap — environment, not code, is what bit us.
+- **Generate the spec on every request unless you have a reason not to.** Static export feels disciplined; it's actually a stale-by-default footgun. With sub-millisecond generation, "live spec" is free.
+- **Two trust boundaries for the same schemas means one source of truth.** `lib/storage.ts` validates with `NewTaskInputSchema`. `app/api/v1/tasks/route.ts` validates with `NewTaskInputSchema`. `lib/openapi.ts` registers `NewTaskInputSchema`. The OpenAPI doc cannot lie about what the API accepts — drift is impossible.
+- **API response shapes belong with the API, not the data layer.** `TaskListResponse` is shaped `{ items, next_cursor }` for *pagination*; `Task` is shaped for *storage*. Putting both in `lib/models.ts` would make the file a junk drawer. The split is cheap and protective.
+- **The yaml package was worth the 4 KB.** JSON-is-YAML trickery would have passed TC-OAS-04 by letter; YAML-that-actually-looks-like-YAML passes it by spirit. The spec is for humans first.
+- **Standalone Node is the fastest debugging environment.** When the bundler/test-runner adds layers, drop down to `node -e "..."` to verify a hypothesis at the runtime level. Three minutes of standalone work saved fifteen minutes of vitest config archaeology.
 
 ---
 
@@ -537,4 +603,4 @@ Route (app)
 
 ---
 
-*Last updated: 2026-05-16 — through Chapter 9 (public REST API live, 71 tests, 93% coverage).*
+*Last updated: 2026-05-16 — through Chapter 10 (OpenAPI 3.1 spec live, Scalar docs at /api/docs, 80 tests).*
