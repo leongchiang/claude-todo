@@ -8,11 +8,24 @@ import {
   type NewTaskInput,
   NewTaskInputSchema,
   type Task,
+  type UpsertUserInput,
+  UpsertUserInputSchema,
+  type User,
 } from "./models";
 
 export type Db = Database.Database;
 
 const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL CHECK (provider IN ('google', 'microsoft')),
+    provider_user_id TEXT NOT NULL,
+    email TEXT,
+    display_name TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (provider, provider_user_id)
+  );
+
   CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -182,6 +195,73 @@ export function markDone(db: Db, taskId: string, userId: string): Task {
 
   // getTask cannot return null here because the row exists (we just updated it).
   return getTask(db, taskId, userId) as Task;
+}
+
+export function buildUserId(provider: string, providerUserId: string): string {
+  return `${provider}:${providerUserId}`;
+}
+
+interface UserRow {
+  id: string;
+  provider: "google" | "microsoft";
+  provider_user_id: string;
+  email: string | null;
+  display_name: string | null;
+  created_at: string;
+}
+
+const rowToUser = (r: UserRow): User => ({
+  id: r.id,
+  provider: r.provider,
+  provider_user_id: r.provider_user_id,
+  email: r.email,
+  display_name: r.display_name,
+  created_at: r.created_at,
+});
+
+/**
+ * Insert a user on first sign-in; return the existing row on subsequent
+ * sign-ins. The composite `(provider, provider_user_id)` is the natural key
+ * — TC-AUTH-05: same email across providers maps to two distinct rows.
+ */
+export function upsertUser(db: Db, input: UpsertUserInput): User {
+  const parsed = UpsertUserInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError(
+      parsed.error.issues[0]?.message ?? "invalid user input",
+      parsed.error.issues.map((i) => ({ path: i.path, message: i.message })),
+    );
+  }
+
+  const { provider, provider_user_id, email, display_name } = parsed.data;
+  const id = buildUserId(provider, provider_user_id);
+  const createdAt = new Date().toISOString();
+
+  db.prepare(
+    `INSERT INTO users (id, provider, provider_user_id, email, display_name, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(provider, provider_user_id) DO UPDATE SET
+       email = excluded.email,
+       display_name = excluded.display_name`,
+  ).run(id, provider, provider_user_id, email, display_name, createdAt);
+
+  const row = db
+    .prepare(
+      `SELECT id, provider, provider_user_id, email, display_name, created_at
+       FROM users WHERE id = ?`,
+    )
+    .get(id) as UserRow;
+  return rowToUser(row);
+}
+
+export function getUserById(db: Db, userId: string): User | null {
+  const row = db
+    .prepare(
+      `SELECT id, provider, provider_user_id, email, display_name, created_at
+       FROM users WHERE id = ?`,
+    )
+    .get(userId) as UserRow | undefined;
+  return row ? rowToUser(row) : null;
 }
 
 export function softDelete(db: Db, taskId: string, userId: string): void {

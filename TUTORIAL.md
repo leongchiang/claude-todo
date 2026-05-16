@@ -33,7 +33,7 @@ The "What we asked Claude Code" sections are the heart of this tutorial. The goa
 - [Chapter 5 — Designing the test suite first](#chapter-5--designing-the-test-suite-first) ✅
 - [Chapter 6 — Scaffolding the project](#chapter-6--scaffolding-the-project) ✅
 - [Chapter 7 — Storage layer with TDD](#chapter-7--storage-layer-with-tdd) ✅
-- [Chapter 8 — Google + Microsoft SSO](#chapter-8--google--microsoft-sso) ⏳
+- [Chapter 8 — Google + Microsoft SSO](#chapter-8--google--microsoft-sso) ✅
 - [Chapter 9 — The public REST API](#chapter-9--the-public-rest-api) ⏳
 - [Chapter 10 — OpenAPI docs](#chapter-10--openapi-docs) ⏳
 - [Chapter 11 — AI features with prompt engineering](#chapter-11--ai-features-with-prompt-engineering) ⏳
@@ -310,9 +310,70 @@ The two uncovered ranges are intentional: lines 49–54 are `getDb()`'s env-var 
 
 ---
 
-## Chapter 8 — Google + Microsoft SSO ⏳
+## Chapter 8 — Google + Microsoft SSO ✅
 
-*Will cover: setting up NextAuth (Auth.js v5), creating OAuth apps in Google Cloud Console and Microsoft Entra ID, wiring providers, redirect URIs, session storage, the first end-to-end sign-in flow.*
+### Goal
+Two OAuth providers, one session, one user identity. After this chapter, a signed-in user has a stable `id` we can scope tasks to (Chapter 9 will plug that into the API).
+
+### Decisions
+
+- **NextAuth v4 stable, not v5 beta.** Pinned in `CLAUDE.md` §2; a tutorial that changes its auth library every six months is hostile to readers.
+- **JWT session strategy.** No database adapter, no four extra tables (`Accounts`, `Sessions`, `VerificationTokens`, `Users`). Stateless cookies hold the session; our own minimal `users` table holds the bits we actually query (display name, email, created_at). Trade-off accepted: revoking a token requires invalidating the JWT signing key globally, not per-user — fine for this scope.
+- **Internal user id = `${provider}:${providerAccountId}`.** A Google sign-in becomes `google:abc123`, a Microsoft one becomes `microsoft:abc123`. This is the natural composite key for OAuth and it makes TC-AUTH-05 ("same email across providers = different users") fall out of the schema instead of needing reconciliation code.
+- **`azure-ad` → `microsoft` mapping.** NextAuth v4 ships the provider plug-in under its legacy name (`azure-ad`); Microsoft rebranded it to Entra ID. We use Microsoft's current naming in env vars and internal keys, and bridge via `mapProviderName()`. Future-proofs against v5's `microsoft-entra-id` rename.
+- **Env reads are best-effort at module-init.** `requireEnv()` that threw on missing OAuth creds broke `next build` (which evaluates route modules without env). Reverted to `process.env.X ?? ""`. NextAuth surfaces a clearer error on the first sign-in attempt anyway.
+- **No bearer-token middleware yet.** That's PATs, Chapter 9. This chapter is OAuth-only.
+
+### What we asked Claude Code
+
+Like Chapter 7: a single sentence ("Chapter 8 — SSO, NextAuth v4, Google + Microsoft Entra"). The spec, test catalog, and prior chapters' shape did the rest.
+
+What surprised me:
+
+- **Claude built the users table without being told to.** The spec hadn't formalized a `users` schema (TEST_CASES.md §6 just names the function, `lib/auth.ts`). Claude added the table to `lib/storage.ts`, exposed `upsertUser` / `getUserById` / `buildUserId`, and wrote 7 tests around them — covering TC-AUTH-04 and TC-AUTH-05 explicitly. The right call; the test cases all but demanded it. But worth noting: Claude expanded the storage layer without a prompt to do so.
+- **Build-time env trap caught itself.** The first `pnpm build` failed because `requireEnv` threw at module load. `next build` evaluates route modules to collect page data; with no OAuth creds in the build env, the route module exploded. Fix was a one-line change. The detection mechanism — actually running `pnpm build` as part of the smoke check rather than stopping at `pnpm test` — would have missed this if we'd called it done at the unit-test mark.
+- **`mapProviderName` is the smallest possible unit test of an auth module.** The whole rest of `lib/auth.ts` is NextAuth config that runs inside NextAuth — hard to unit-test in isolation. But pulling out one pure function (`raw provider name → our enum`) gave us something to assert against, and made the "azure-ad / microsoft" rename explicit in the test names. Good pattern for future auth chapters.
+
+### What you (the reader) have to do — manual OAuth setup
+
+I can write the code; I can't create OAuth apps. Two providers, two consoles:
+
+**Google Cloud Console** (`console.cloud.google.com/apis/credentials`)
+1. Create OAuth 2.0 Client ID → **Web application**.
+2. Authorized redirect URI: `http://localhost:3000/api/auth/callback/google` (add the production URL later in Chapter 15).
+3. Copy Client ID → `AUTH_GOOGLE_ID` in `.env.local`. Client secret → `AUTH_GOOGLE_SECRET`.
+
+**Microsoft Entra ID** (`entra.microsoft.com` → App registrations → New registration)
+1. Supported account types: **Accounts in any organizational directory and personal Microsoft accounts** (common tenant).
+2. Redirect URI: Web → `http://localhost:3000/api/auth/callback/azure-ad`.
+3. Application (client) ID → `AUTH_MICROSOFT_ENTRA_ID_ID`. Then **Certificates & secrets** → new client secret → `AUTH_MICROSOFT_ENTRA_ID_SECRET`. Leave `AUTH_MICROSOFT_ENTRA_ID_TENANT_ID` empty (defaults to `common`).
+
+**Session secret** (do this once):
+```
+openssl rand -base64 32   # paste into AUTH_SECRET
+```
+
+Then `pnpm dev` and visit `http://localhost:3000/api/auth/signin` — you'll see both buttons.
+
+### Output
+
+Branch `feat/auth-sso` → PR → main.
+
+- New: `lib/auth.ts`, `app/api/auth/[...nextauth]/route.ts`, `types/next-auth.d.ts`, `tests/unit/users.test.ts`, `tests/unit/auth.test.ts`.
+- Modified: `lib/models.ts` (`UserSchema`, `ProviderSchema`, `UpsertUserInputSchema`), `lib/storage.ts` (`users` table, `upsertUser`, `getUserById`, `buildUserId`), `TUTORIAL.md`.
+- Tests: 24 passed (up from 14). 7 cover identity/persistence; 3 cover provider-name mapping.
+
+What's *not* tested in CI yet:
+- TC-AUTH-01..03, 06, 09, 10 — all require either real OAuth callbacks or a Playwright fixture with stubbed providers. Chapter 13 will revisit when we wire the test harness for that.
+- TC-AUTH-08 (tampered cookie → 401) — needs a protected route handler, which is Chapter 9.
+
+### Lessons
+
+- **OAuth creds are a true external dependency.** Plan for them like you'd plan for any third-party setup: a "manual setup" subsection in the chapter, env-var placeholders that don't lie about being optional, and a build that doesn't crash without them. The build-without-creds requirement isn't theoretical — it's how every fresh `git clone && pnpm install && pnpm build` works.
+- **`requireEnv` belongs at request time, not module init.** This is a recurring Next.js pitfall (Server Components are evaluated at build, route modules are evaluated to collect page data). The safe pattern is `env() ?? ""` at the module boundary, with the actual `required` check inside the request handler.
+- **Composite OAuth identity keys are worth the upfront design.** `provider:subject` as the user id makes TC-AUTH-05 fall out of the schema. The alternative — single `id`, email as natural key — turns the "same email, two providers" case into reconciliation code that has to make a policy call (merge? error? prefer-provider?). Better to not have the policy call at all.
+- **NextAuth's v4 `azure-ad` name is going to bite forkers.** It's the legacy name; Microsoft hasn't called it Azure AD since 2023. Our `mapProviderName` keeps the rest of the codebase clean, but anyone debugging OAuth flow will see "azure-ad" in redirect URIs and may wonder. Worth flagging early — done in this chapter.
+- **Don't over-test what's mostly config.** `lib/auth.ts` is 80% NextAuth options. Trying to unit-test the JWT callback would mean instantiating fake `account` and `profile` objects whose shapes are defined by next-auth's types — brittle and low-value. We unit-test the *one pure function* and trust NextAuth's own test suite for the rest. The full flow gets covered by Playwright when OAuth mocking lands.
 
 ---
 
@@ -396,4 +457,4 @@ The two uncovered ranges are intentional: lines 49–54 are `getDb()`'s env-var 
 
 ---
 
-*Last updated: 2026-05-16 — through Chapter 7 (storage layer landed, 14 tests, 94.66% coverage).*
+*Last updated: 2026-05-16 — through Chapter 8 (SSO wired, 24 tests; OAuth flow requires manual provider setup).*
