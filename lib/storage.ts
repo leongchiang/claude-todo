@@ -27,6 +27,14 @@ const SCHEMA = `
     UNIQUE (provider, provider_user_id)
   );
 
+  CREATE TABLE IF NOT EXISTS ai_daily_costs (
+    user_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    cost_micros INTEGER NOT NULL DEFAULT 0,
+    call_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
+  );
+
   CREATE TABLE IF NOT EXISTS pats (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -284,6 +292,37 @@ export function upsertUser(db: Db, input: UpsertUserInput): User {
     )
     .get(id) as UserRow;
   return rowToUser(row);
+}
+
+/**
+ * UTC `YYYY-MM-DD` string for the daily-cost ledger. Day boundaries are UTC
+ * (not the user's local timezone) so the ledger matches the audit log
+ * timestamps and stays consistent across regions.
+ */
+export function todayUtc(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+export function getDailyCostMicros(db: Db, userId: string, day: string): number {
+  const row = db
+    .prepare("SELECT cost_micros FROM ai_daily_costs WHERE user_id = ? AND day = ?")
+    .get(userId, day) as { cost_micros: number } | undefined;
+  return row?.cost_micros ?? 0;
+}
+
+/**
+ * Atomic UPSERT so concurrent AI calls each contribute exactly once to the
+ * day's ledger (TC-AI-10). SQLite serializes the INSERT...ON CONFLICT in a
+ * single write transaction.
+ */
+export function recordAiCost(db: Db, userId: string, day: string, costMicros: number): void {
+  db.prepare(
+    `INSERT INTO ai_daily_costs (user_id, day, cost_micros, call_count)
+     VALUES (?, ?, ?, 1)
+     ON CONFLICT(user_id, day) DO UPDATE SET
+       cost_micros = cost_micros + excluded.cost_micros,
+       call_count = call_count + 1`,
+  ).run(userId, day, costMicros);
 }
 
 export function getUserById(db: Db, userId: string): User | null {

@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
-import { NotFoundError, PiiRejectedError, ValidationError } from "./errors";
+import {
+  AiResponseInvalidError,
+  AiResponseParseError,
+  AiUnavailableError,
+  CostCeilingExceededError,
+  NotFoundError,
+  PiiRejectedError,
+  ValidationError,
+} from "./errors";
 
 export function errorResponse(
   code: string,
@@ -53,6 +61,24 @@ export function mapError(error: unknown): NextResponse {
   if (error instanceof ZodError) {
     return errorResponse("validation_error", 400, {
       issues: error.issues.map((i) => ({ path: i.path, message: i.message })),
+    });
+  }
+  if (error instanceof AiUnavailableError) {
+    return errorResponse("ai_unavailable", 503, {
+      reason: error.reason,
+      message: error.message,
+    });
+  }
+  if (error instanceof CostCeilingExceededError) {
+    return errorResponse("cost_ceiling_exceeded", 429, {
+      message: error.message,
+      current_micros: error.current_micros,
+      ceiling_micros: error.ceiling_micros,
+    });
+  }
+  if (error instanceof AiResponseParseError || error instanceof AiResponseInvalidError) {
+    return errorResponse("ai_response_invalid", 502, {
+      message: error.message,
     });
   }
   const requestId = randomUUID();

@@ -37,6 +37,15 @@ const IssuedPatSchema = z.object({
 
 const NewPatInputSchema = z.object({ name: z.string().min(1).max(100) });
 
+const RankedTaskSchema = z.object({
+  id: z.string().uuid(),
+  rank: z.number().int().min(1),
+  reason: z.string(),
+});
+const PrioritizeResponseSchema = z.object({ tasks: z.array(RankedTaskSchema) });
+
+const SummaryResponseSchema = z.object({ summary: z.string() });
+
 const ErrorSchema = z
   .object({
     error: z.string(),
@@ -68,6 +77,9 @@ function buildRegistry(): OpenAPIRegistry {
   r.register("IssuedPat", IssuedPatSchema);
   r.register("NewPatInput", NewPatInputSchema);
   r.register("Error", ErrorSchema);
+  r.register("RankedTask", RankedTaskSchema);
+  r.register("PrioritizeResponse", PrioritizeResponseSchema);
+  r.register("SummaryResponse", SummaryResponseSchema);
 
   r.registerComponent("securitySchemes", "Session", {
     type: "apiKey",
@@ -246,6 +258,42 @@ function buildRegistry(): OpenAPIRegistry {
     },
   });
 
+  r.registerPath({
+    method: "post",
+    path: "/api/v1/tasks/prioritize",
+    summary: "Claude-ranked list of the caller's open tasks (top 50)",
+    tags: ["ai"],
+    security: auth,
+    responses: {
+      200: {
+        description: "ranked tasks",
+        content: { "application/json": { schema: PrioritizeResponseSchema } },
+      },
+      401: errorResponse,
+      429: errorResponse,
+      502: errorResponse,
+      503: errorResponse,
+    },
+  });
+
+  r.registerPath({
+    method: "post",
+    path: "/api/v1/tasks/summary",
+    summary: "Three-sentence Claude recap of tasks completed today",
+    tags: ["ai"],
+    security: auth,
+    responses: {
+      200: {
+        description: "summary",
+        content: { "application/json": { schema: SummaryResponseSchema } },
+      },
+      401: errorResponse,
+      429: errorResponse,
+      502: errorResponse,
+      503: errorResponse,
+    },
+  });
+
   return r;
 }
 
@@ -274,6 +322,7 @@ export function buildOpenApiDocument() {
       { name: "me", description: "Current user" },
       { name: "tasks", description: "Tasks CRUD" },
       { name: "pats", description: "Personal Access Tokens (session-only)" },
+      { name: "ai", description: "Claude-powered features (prioritize, summary)" },
     ],
   });
 }
