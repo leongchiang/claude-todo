@@ -8,11 +8,21 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+    # Major bumps are evaluated by hand per tutorial chapter that depends
+    # on the package. Auto-merging them blindly broke zod 3→4 and biome
+    # 1→2 mid-tutorial (see Chapter 7's lessons). Re-enable per package
+    # only when ready.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(ci)"

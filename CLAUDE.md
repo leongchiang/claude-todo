@@ -222,7 +222,7 @@ Rules for how Claude Code interacts with this public GitHub repo.
 ### 8.3 Security (free for public repos)
 - **CodeQL** on PR + nightly. High-severity findings block merge.
 - **Secret scanning** + push protection enabled.
-- **Dependabot** weekly; auto-merge minor/patch updates after CI green.
+- **Dependabot** weekly; auto-merge minor/patch updates after CI green. Major bumps are ignored — they're evaluated by hand per tutorial chapter that depends on the package. Re-enable a specific package's majors only when ready to absorb the breakage.
 
 ### 8.4 Releases
 - Tag `v0.x.x` → GH Action publishes Release with notes auto-generated from Conventional Commits.
