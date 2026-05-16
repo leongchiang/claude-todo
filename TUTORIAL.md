@@ -32,7 +32,7 @@ The "What we asked Claude Code" sections are the heart of this tutorial. The goa
 - [Chapter 4 — Writing CLAUDE.md (project memory)](#chapter-4--writing-claudemd-project-memory) ✅
 - [Chapter 5 — Designing the test suite first](#chapter-5--designing-the-test-suite-first) ✅
 - [Chapter 6 — Scaffolding the project](#chapter-6--scaffolding-the-project) ✅
-- [Chapter 7 — Storage layer with TDD](#chapter-7--storage-layer-with-tdd) ⏳
+- [Chapter 7 — Storage layer with TDD](#chapter-7--storage-layer-with-tdd) ✅
 - [Chapter 8 — Google + Microsoft SSO](#chapter-8--google--microsoft-sso) ⏳
 - [Chapter 9 — The public REST API](#chapter-9--the-public-rest-api) ⏳
 - [Chapter 10 — OpenAPI docs](#chapter-10--openapi-docs) ⏳
@@ -246,9 +246,67 @@ $ pnpm test:e2e    → playwright (1 passed, 3.4s incl. webServer boot)
 
 ---
 
-## Chapter 7 — Storage layer with TDD ⏳
+## Chapter 7 — Storage layer with TDD ✅
 
-*Will cover: writing the storage tests from `TEST_CASES.md` §4 first, then implementing `lib/storage.ts` to pass them. Demo of how Claude Code uses tests to drive implementation.*
+### Goal
+First real code in the repo. Implement `lib/storage.ts` — user-scoped CRUD over SQLite — and prove correctness via the 12 test cases from `TEST_CASES.md` §4. Demo of how Claude Code uses a pre-written test catalog to drive implementation.
+
+### Decisions
+
+- **TDD red → green, but without ceremony.** Tests first, fail (red), implementation, pass (green). We didn't write tests one at a time; the whole `tests/unit/storage.test.ts` went in before any `lib/storage.ts` existed. The "red" was confirming `Cannot find module '@/lib/storage'`, not failing assertions on stubs.
+- **`TEST_CASES.md` §4 *is* the spec.** No separate planning doc this time. The GWT table mapped 1:1 to `describe` / `it` blocks. Twelve tests in, twelve tests later.
+- **Two-tier db access.** `openDb(path)` is uncached (caller owns lifecycle — used by tests). `getDb()` is the env-driven production singleton. Same schema bootstrap, different sharing rules. Tests stay isolated without mocks.
+- **Real temp SQLite per test, not mocks.** Per `CLAUDE.md` §10. `mkdtempSync(tmpdir(), …)` in `beforeEach`, `rmSync(…, recursive: true)` in `afterEach`. ~3ms overhead per test, worth it.
+- **`rowid`-based cursor pagination.** Tasks order by SQLite's implicit `rowid` (monotonic on insert), cursor is `base64url(rowid)`. Chose this over `(created_at, id)` row-value comparison because (a) `Date.toISOString()` collides when 100 inserts happen in the same millisecond — exactly the TC-S-08 scenario — and (b) keeping the cursor opaque from outside is good API hygiene. `id` (UUID) stays the public handle.
+- **Zod at the trust boundary, custom errors above.** `addTask` calls `NewTaskInputSchema.safeParse`; on failure it wraps Zod's issues into our own `ValidationError`. Same shape will work for Route Handlers in Chapter 9 — they re-throw `ValidationError` as 400. `getTask` / `listTasks` skip Zod on internal calls (trust the caller; the userId comes from auth middleware, not the wire).
+- **Tomb-stoned soft-delete is invisible everywhere.** Once `deleted_at` is set, `getTask` returns null, `listTasks` skips the row, `markDone`/`softDelete` throw `NotFoundError`. There is *no* "with-deleted" mode in the API — admin restore is out of scope.
+- **Rejected: a separate `lib/db.ts` for connection setup.** Considered splitting `openDb`/`getDb` from the CRUD functions. Decided no: 200 lines is well under the §9 file-size ceiling, the SQL schema lives next to the queries that use it, and a future split is trivial.
+
+### What we asked Claude Code
+
+One sentence: "Write Chapter 7 — storage layer, TDD style, the 12 test cases in TEST_CASES.md §4." That was it. Claude already had the spec, the test catalog, and the CLAUDE.md rules from session context; nothing else needed re-stating.
+
+A few things that worked:
+
+- **Letting Claude pick the tactics.** I didn't tell Claude how to do pagination, what to use for IDs, or how to structure the error types. Claude picked `rowid` cursors, `randomUUID`, custom error subclasses with optional `issues[]`. All defensible. If I'd specified each, the chapter would be a list of my preferences instead of an example of agentic design.
+- **The "smoke check" pattern from Chapter 6 carrying forward.** Claude ran `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm test:cov` after implementation — not because I asked, but because Chapter 6's lessons set the precedent. Memory + the executed prior chapter both reinforced it.
+- **Biome doing the cleanup.** Two lint passes auto-fixed format + organize-imports without manual edits. The `PostToolUse` hook on Edit/Write means most files were already correct when lint ran; the remaining issues (Biome's `organizeImports` grouping) were one `--fix --unsafe` away.
+
+What surprised me: **Claude designed past the test cases.** TC-S-07 only asserts soft-deleted rows hide from `listTasks`, but Claude also made `getTask` return null for deleted rows owned by the same user — the right call (no zombie reads) but not strictly required by the spec. Worth noting in code review: agentic generalization is usually right, but it's the kind of thing that quietly expands behavior without a spec update.
+
+### Output
+
+Branch `feat/storage-layer` → PR stacked on the docs PR.
+
+- 4 new: `lib/errors.ts` (16 lines), `lib/models.ts` (32 lines), `lib/storage.ts` (200 lines), `tests/unit/storage.test.ts` (150 lines, 13 tests).
+- 1 modified: `vitest.config.ts` — added `resolve.alias` for `@/*` so vitest honors the tsconfig path alias.
+
+Test + coverage output:
+
+```
+Test Files  2 passed (2)
+     Tests  14 passed (14)
+
+% Coverage report from v8
+------------|---------|----------|---------|---------|-------------------
+File        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+------------|---------|----------|---------|---------|-------------------
+All files   |   94.66 |    94.11 |   92.85 |   94.66 |
+ errors.ts  |     100 |      100 |     100 |     100 |
+ models.ts  |     100 |      100 |     100 |     100 |
+ storage.ts |   93.04 |    93.54 |    90.9  |  93.04  | 49-54, 131-132
+```
+
+The two uncovered ranges are intentional: lines 49–54 are `getDb()`'s env-var path (tests use `openDb` directly so they don't depend on mutating `process.env`); lines 131–132 are the "invalid cursor" branch (no test asserts the error message — the API layer will, in Chapter 9).
+
+### Lessons
+
+- **Tests catalog → tests file is a 1:1 translation, not a creative act.** The hard part — figuring out what to test — was done weeks ago in `TEST_CASES.md`. The implementation chapter doesn't need to argue about behavior, it just translates GWT into vitest. Wrap a session on test catalogs early; the implementation chapters get cheaper.
+- **Vitest doesn't honor tsconfig paths by default.** Either install `vite-tsconfig-paths` or set `resolve.alias` in `vitest.config.ts`. We did the latter — one fewer plugin. Worth committing under `CLAUDE.md` §10 for future test files.
+- **The "real temp DB" rule is cheaper than it sounds.** Total test runtime: 30ms across 13 tests, each opening its own SQLite file. Mocks would have saved ~25ms and cost us the Chapter 7 lesson about cursor collisions under same-millisecond `created_at`. Not worth it.
+- **`exactOptionalPropertyTypes` keeps biting.** Had to use `cursor?: string | null | undefined` instead of `cursor?: string | null` — when the field is *both* optional and nullable, all three states must be in the union. Annoying. Worth it.
+- **Biome's `organizeImports` ≠ CLAUDE.md §9.** Biome groups `node:` + external into one block, separated from local. CLAUDE.md §9 specifies three groups. Biome won; updating §9 is on the followup list. Pick one source of truth before the conventions diverge further.
+- **The agent generalized past the spec on soft-delete.** `getTask` hiding soft-deleted rows wasn't a TC-S-07 requirement, but it's correct. Lesson for *reviewing* agent code: read the diff for behavior the tests don't cover. Where Claude generalized, decide if you want it or not; if you do, write the test.
 
 ---
 
@@ -338,4 +396,4 @@ $ pnpm test:e2e    → playwright (1 passed, 3.4s incl. webServer boot)
 
 ---
 
-*Last updated: 2026-05-16 — through Chapter 6 (scaffold landed, retrospective written).*
+*Last updated: 2026-05-16 — through Chapter 7 (storage layer landed, 14 tests, 94.66% coverage).*
