@@ -1,4 +1,10 @@
+import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
+
+// Patch zod's ZodType.prototype with `.openapi()` before any schema instance
+// is created. This must live in the module that produces the schemas so the
+// extension applies to the same zod runtime they're instantiated from.
+extendZodWithOpenApi(z);
 
 export const ProviderSchema = z.enum(["google", "microsoft"]);
 export type Provider = z.infer<typeof ProviderSchema>;
