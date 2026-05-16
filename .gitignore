@@ -26,9 +26,11 @@ playwright-report/
 test-results/
 .vitest/
 
-# Local SQLite databases
+# Local SQLite databases (incl. WAL artifacts)
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 

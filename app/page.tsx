@@ -1,65 +1,98 @@
-import Image from "next/image";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { getServerSession } from "next-auth";
 
-export default function Home() {
+import { authOptions } from "@/lib/auth";
+
+export default async function LandingPage() {
+  // If they're already signed in, send them straight to the app.
+  try {
+    const session = await getServerSession(authOptions);
+    if (session?.user?.id) redirect("/app");
+  } catch {
+    // No NextAuth context at build time — fine, render the landing.
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <main className="flex flex-1 flex-col">
+      <header className="mx-auto w-full max-w-3xl px-4 pt-8 pb-4 sm:pt-12">
+        <Link
+          href="/"
+          className="inline-block rounded-sm text-xl font-semibold tracking-tight focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900"
+        >
+          ClaudeTodo
+        </Link>
+      </header>
+
+      <section className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-8 sm:py-16">
+        <div className="space-y-4">
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">
+            A todo app, the long way around.
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+          <p className="text-base text-neutral-600 sm:text-lg">
+            ClaudeTodo is an open-source tutorial project. The product is the process: an end-to-end
+            walkthrough of building a real, deployed, AI-augmented web app with Claude Code. Sign in
+            to try it; read the build at{" "}
+            <Link
+              href="https://github.com/leongchiang/claude-todo/blob/main/TUTORIAL.md"
+              className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+              TUTORIAL.md
+            </Link>
+            .
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+          <Link
+            href="/api/auth/signin?callbackUrl=%2Fapp"
+            data-testid="signin-cta"
+            className="inline-flex min-h-11 items-center justify-center rounded-md bg-neutral-900 px-5 text-base font-medium text-white transition hover:bg-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-2"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            Continue with Google or Microsoft
+          </Link>
+          <Link
+            href="/api/docs"
+            className="inline-flex min-h-11 items-center justify-center rounded-md border border-neutral-300 bg-white px-5 text-base font-medium text-neutral-900 transition hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-2"
           >
-            Documentation
-          </a>
+            Browse the API docs
+          </Link>
         </div>
-      </main>
-    </div>
+
+        <dl className="grid grid-cols-1 gap-6 pt-4 sm:grid-cols-3 sm:pt-8">
+          <div>
+            <dt className="text-sm font-semibold text-neutral-900">Public REST API</dt>
+            <dd className="mt-1 text-sm text-neutral-600">
+              Versioned <code>/api/v1/*</code>, Bearer or session auth, rate-limited, with
+              auto-generated OpenAPI 3.1 docs.
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm font-semibold text-neutral-900">AI features</dt>
+            <dd className="mt-1 text-sm text-neutral-600">
+              Claude-powered task prioritization and a 3-sentence daily summary, with a per-user
+              cost ceiling and metadata-only audit log.
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm font-semibold text-neutral-900">Open source</dt>
+            <dd className="mt-1 text-sm text-neutral-600">
+              MIT.{" "}
+              <Link
+                href="https://github.com/leongchiang/claude-todo"
+                className="underline decoration-neutral-400 underline-offset-2 hover:decoration-neutral-900"
+              >
+                Fork the repo
+              </Link>{" "}
+              and follow along.
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <footer className="mx-auto w-full max-w-3xl px-4 py-6 text-xs text-neutral-500">
+        Built with Claude Code. License: MIT.
+      </footer>
+    </main>
   );
 }
