@@ -1,11 +1,13 @@
+export interface ValidationIssue {
+  path: ReadonlyArray<PropertyKey>;
+  message: string;
+}
+
 export class ValidationError extends Error {
   override name = "ValidationError";
-  readonly issues?: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }>;
+  readonly issues?: ReadonlyArray<ValidationIssue>;
 
-  constructor(
-    message: string,
-    issues?: ReadonlyArray<{ path: ReadonlyArray<string | number>; message: string }>,
-  ) {
+  constructor(message: string, issues?: ReadonlyArray<ValidationIssue>) {
     super(message);
     if (issues !== undefined) this.issues = issues;
   }
