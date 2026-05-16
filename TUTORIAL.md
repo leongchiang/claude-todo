@@ -194,7 +194,127 @@ Agree on observable behavior before writing code. Get a reviewable test catalog 
 
 ## Chapter 6 — Scaffolding the project ⏳
 
-*To be written when we scaffold the repo. Will cover: `pnpm create next-app`, configuring TypeScript strict, adding Biome / Vitest / Playwright, creating the `.claude/` and `.github/` directories, first commit & push to personal GitHub.*
+> **Status: scaffold executed 2026-05-16.** This chapter is still the pre-execution plan; a retrospective rewrite (Decisions / What we asked / Output / Lessons) is the next commit. Three plan-time assumptions were already invalidated during execution — see the new "Where the plan was wrong" subsection at the end.
+
+### Goal
+Turn five markdown files into a working Next.js codebase. No features yet — just the bones: directories, configs, dev server boots, lint and tests run green on an empty repo. Everything subsequent chapters need must be in place.
+
+### Plan
+
+**One bootstrap, then layer in.** We start from `pnpm create next-app`, then add the tools `CLAUDE.md` §2 commits us to.
+
+1. **Bootstrap Next.js**
+   - `pnpm create next-app@latest claude-todo-app --typescript --tailwind --app --no-src-dir --no-eslint --use-pnpm --import-alias "@/*"`
+   - Move generated files up into the repo root (we already have `CLAUDE.md`, `PRODUCT_SPEC.md`, etc. checked in), reconciling any clashing `.gitignore`/`README.md`.
+   - `--no-eslint` because we use Biome (§9). `--no-src-dir` because the repo layout in `CLAUDE.md` §3 has `app/` at the root.
+
+2. **Tighten TypeScript**
+   - Extend the generated `tsconfig.json` with `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `forceConsistentCasingInFileNames`. `strict: true` is already set by Next.
+
+3. **Add Biome**
+   - `pnpm add -D @biomejs/biome` → `pnpm exec biome init`.
+   - Set line width 100, two-space indent. Wire `pnpm lint` / `pnpm format` in `package.json`.
+
+4. **Add Vitest**
+   - `pnpm add -D vitest @vitest/coverage-v8 happy-dom`.
+   - Minimal `vitest.config.ts`: node environment for `lib/`, happy-dom for any component tests later. Coverage thresholds 80% on `lib/` per §10.
+   - One trivial smoke test under `tests/unit/` so `pnpm test` returns green from day one.
+
+5. **Add Playwright**
+   - `pnpm add -D @playwright/test` → `pnpm exec playwright install --with-deps chromium`.
+   - `playwright.config.ts` configured for `http://localhost:3000`, headless in CI, headed locally.
+   - One placeholder spec under `tests/e2e/` that loads `/` so `pnpm test:e2e` is wired.
+
+6. **Add runtime deps** (install only — no usage yet)
+   - `pnpm add zod @asteasolutions/zod-to-openapi @scalar/nextjs-api-reference better-sqlite3 next-auth@beta @anthropic-ai/sdk`
+   - `pnpm add -D @types/better-sqlite3`
+
+7. **Environment template**
+   - Write `.env.example` with placeholders only: `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `AUTH_MICROSOFT_ENTRA_ID_ID`, `AUTH_MICROSOFT_ENTRA_ID_SECRET`, `ANTHROPIC_API_KEY`, `DATABASE_PATH=./data/todo.db`.
+   - Confirm `.env*` is gitignored (already is).
+
+8. **Repo skeleton directories** — empty `.gitkeep`s for now
+   - `lib/`, `lib/ai/`, `prompts/`, `tests/unit/`, `tests/e2e/`, `data/` (gitignored), `logs/` (gitignored).
+
+9. **`.claude/settings.json`**
+   - Encode §14: allow `pnpm *`, `npx playwright *`, `git *` (except force/no-verify), `gh *`, `node`, `tsc`, `biome *`, `sqlite3`, `az *`; deny `rm -rf *`, `git push --force*`, `git commit --no-verify*`.
+   - `PostToolUse` hook: run `biome format --write` on `*.ts`/`*.tsx` after Edit/Write.
+   - Skills + subagents directories created empty; they're built out in Chapter 13.
+
+10. **`.github/` skeletons** (workflow content stays empty; Chapter 14 fills them in)
+    - `PULL_REQUEST_TEMPLATE.md`, `ISSUE_TEMPLATE/bug.yml`, `ISSUE_TEMPLATE/feature.yml`, `CODEOWNERS` (owner: `@<my-handle>`), `dependabot.yml` (weekly, auto-merge minor/patch).
+    - `workflows/` directory exists but empty — keeps Chapter 14's diff focused on CI.
+
+11. **`README.md`**
+    - Short: one paragraph what it is, badges placeholder, "see `TUTORIAL.md` to follow along," license. Detail deferred until there's something to demo.
+
+12. **Smoke check**
+    - `pnpm dev` boots; `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm test:e2e` all green on the empty scaffold. **If any are red, fix the scaffold, not the rule.** (§11.)
+
+13. **First commit & push**
+    - Conventional commit: `chore: scaffold Next.js, TypeScript strict, Biome, Vitest, Playwright`.
+    - Feature branch `chore/scaffold` → PR → CI (none yet, so green by default) → squash merge → tag nothing yet.
+
+### What we'll ask Claude Code
+
+The plan above is what I'll hand Claude as the brief. Two interaction patterns I expect to lean on:
+
+- **Tight, parallel tool use.** Steps 2–6 are independent file edits + installs; I want Claude to batch them. If Claude serializes them, I'll redirect: "run those in parallel."
+- **Smoke-check discipline.** Step 12 is the moment to confirm reality matches the plan. I'll ask Claude to run all four commands and paste the output, not to claim success after the installs finish.
+
+One thing I won't hand to Claude: the actual `pnpm create next-app` invocation in step 1. Interactive scaffolders + agent shells are a bad combo. I'll run that one by hand, then hand the populated directory back.
+
+### Expected output
+
+Roughly 25–30 new/modified files. The PR diff should be almost entirely additive: configs, empty directories with `.gitkeep`, the `.env.example`, the skeleton workflows folder, two placeholder tests. Zero application code in `app/` beyond what `create-next-app` ships (we'll delete the default landing page in Chapter 12, not now — leaving it lets us prove `pnpm dev` boots).
+
+### Watch-outs (lessons-to-be)
+
+Things I expect to bite us, recorded now so we notice if they do:
+
+- **`create-next-app` defaults drift.** The flags above match Next 14/15 at time of writing; if Next 16 reorders prompts, the brief becomes stale.
+- **Biome vs. Next's ESLint baggage.** `--no-eslint` should keep this clean, but stray `eslint-config-next` references sometimes appear; grep for them.
+- **Playwright in CI.** Browser install is slow; Chapter 14 will need a cache step. Note it but don't solve it yet.
+- **Auth.js v5 beta.** Pinning to a specific beta avoids surprise breakage mid-tutorial. Record the exact version in the commit.
+- **`better-sqlite3` native build.** Needs Python + a C++ toolchain. Fine on macOS/Linux dev boxes; flag in `README.md` for Windows readers.
+
+### Open question for review
+
+Should the scaffold commit include the empty `.github/workflows/*.yml` files (with just a `name:` field) or skip the directory entirely until Chapter 14? Including them avoids a noisy "first CI" diff later; skipping them keeps this chapter honest about what's actually wired. Leaning toward **skip** — write the directory in Chapter 14 when we know what's in it.
+
+**Resolved at execution time:** skipped. No `workflows/` directory in this commit.
+
+### Where the plan was wrong
+
+Three things the plan got wrong, caught during execution:
+
+1. **`create-next-app` produced Next 16, not Next 14.** The plan said "Next 14+" generically; the scaffolder picked the latest (16.2.6) plus React 19.2 and Tailwind v4. Pinning a major version in `CLAUDE.md` §2 would have spared us the surprise. Action: update `CLAUDE.md` §2 to "Next 16 / React 19 / Tailwind v4."
+
+2. **pnpm's new `allowBuilds` gate is now mandatory.** pnpm 11 rewrote our `pnpm-workspace.yaml` with `allowBuilds: <pkg>: set this to true or false` placeholders and then *failed every subsequent command* until we resolved them to literal `true`/`false`. The plan didn't anticipate this — it's new behavior. Sharp, better-sqlite3, esbuild, biome, and unrs-resolver all needed explicit allow.
+
+3. **`exactOptionalPropertyTypes: true` is sharper than I expected.** Playwright's `defineConfig` rejects `workers: undefined` under this flag — the type is `string | number`, not `string | number | undefined`. Had to spread the property conditionally. Worth knowing for future configs: this flag is fine for *our* code but makes some library type-definitions awkward.
+
+### Smoke check (actual output, all green)
+
+```
+$ pnpm typecheck   → tsc --noEmit (0 errors)
+$ pnpm lint        → biome check . (13 files, no issues)
+$ pnpm test        → vitest: 1 passed
+$ pnpm build       → next build (4 static pages, 836ms compile)
+$ pnpm test:e2e    → playwright: 1 passed (chromium, 3.4s incl. webServer boot)
+```
+
+### Output (this commit)
+
+- 22 new files: configs, skeleton dirs with `.gitkeep`s, `.env.example`, `.claude/settings.json`, `.github/` skeletons, `README.md`, two placeholder tests, the create-next-app boilerplate (`app/`, `public/`, `next.config.ts`, `postcss.config.mjs`, `next-env.d.ts`).
+- 1 modified file: `TUTORIAL.md` (this chapter).
+- 1 lockfile: `pnpm-lock.yaml`.
+
+### Lessons (preliminary — fuller pass in the retrospective commit)
+
+- **Use a non-empty target dir trick.** Scaffolding into `/tmp/cn-scaffold` and rsync-merging back beat fighting `create-next-app .` over the existing markdown.
+- **Verify the smoke check actually runs the command, not just installs.** `pnpm install`'s success says nothing about whether `tsc` returns 0. Run all four commands.
+- **Don't trust "Aborting installation" alone.** `create-next-app` printed a scary abort while having successfully installed everything. Read the line above the error before reacting.
 
 ---
 
@@ -290,4 +410,4 @@ Agree on observable behavior before writing code. Get a reviewable test catalog 
 
 ---
 
-*Last updated: 2026-05-14 — through Chapter 5.*
+*Last updated: 2026-05-16 — through Chapter 5; Chapter 6 drafted as pre-execution plan, pending scaffold.*
