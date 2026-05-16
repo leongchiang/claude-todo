@@ -31,8 +31,8 @@ The "What we asked Claude Code" sections are the heart of this tutorial. The goa
 - [Chapter 3 — Writing the Product Spec](#chapter-3--writing-the-product-spec) ✅
 - [Chapter 4 — Writing CLAUDE.md (project memory)](#chapter-4--writing-claudemd-project-memory) ✅
 - [Chapter 5 — Designing the test suite first](#chapter-5--designing-the-test-suite-first) ✅
-- [Chapter 6 — Scaffolding the project](#chapter-6--scaffolding-the-project) ⏳
-- [Chapter 7 — Storage layer with TDD](#chapter-7--storage-layer-with-tdd) ⏳
+- [Chapter 6 — Scaffolding the project](#chapter-6--scaffolding-the-project) ✅
+- [Chapter 7 — Storage layer with TDD](#chapter-7--storage-layer-with-tdd) ✅
 - [Chapter 8 — Google + Microsoft SSO](#chapter-8--google--microsoft-sso) ⏳
 - [Chapter 9 — The public REST API](#chapter-9--the-public-rest-api) ⏳
 - [Chapter 10 — OpenAPI docs](#chapter-10--openapi-docs) ⏳
@@ -192,135 +192,121 @@ Agree on observable behavior before writing code. Get a reviewable test catalog 
 
 ---
 
-## Chapter 6 — Scaffolding the project ⏳
-
-> **Status: scaffold executed 2026-05-16.** This chapter is still the pre-execution plan; a retrospective rewrite (Decisions / What we asked / Output / Lessons) is the next commit. Three plan-time assumptions were already invalidated during execution — see the new "Where the plan was wrong" subsection at the end.
+## Chapter 6 — Scaffolding the project ✅
 
 ### Goal
-Turn five markdown files into a working Next.js codebase. No features yet — just the bones: directories, configs, dev server boots, lint and tests run green on an empty repo. Everything subsequent chapters need must be in place.
+Turn five markdown files into a working Next.js codebase. No features yet — just the bones: every config in place, dev server boots, lint and tests green on an empty repo, so Chapters 7–15 have somewhere to land.
 
-### Plan
+### Decisions
 
-**One bootstrap, then layer in.** We start from `pnpm create next-app`, then add the tools `CLAUDE.md` §2 commits us to.
+- **Scaffold via `pnpm create next-app`, then layer on.** Don't hand-roll the directory tree; `create-next-app` knows the current Next idioms (it's the spec, in a sense). Then add Biome / Vitest / Playwright on top.
+- **`--no-eslint`.** We use Biome (§9) for lint and format. Letting `create-next-app` drop in its ESLint config and then ripping it out is wasted work.
+- **`--no-src-dir`, app at the root.** Matches the repo layout in `CLAUDE.md` §3 and keeps imports short.
+- **`--use-pnpm` and `--turbopack`.** Both are committed to in CLAUDE.md; pinning them at scaffold time avoids divergence.
+- **Sharp / better-sqlite3 / esbuild / biome / unrs-resolver: all `allowBuilds: true`.** pnpm 11 now gates package build scripts behind explicit opt-in; we trust all five and need their native binaries.
+- **Test runners stubbed with one green test each.** A passing `vitest` and `playwright` from day one is worth more than a slightly emptier diff — `pnpm test:e2e` proves the dev-server lifecycle works before we depend on it.
+- **Rejected: `next-auth@beta` (Auth.js v5).** The pre-execution plan called for the v5 beta; reversed to v4 stable (`^4.24.0`) on the principle that betas drift mid-tutorial and a reader following along in three months shouldn't fight a different API.
+- **Rejected: empty `.github/workflows/` directory.** The plan flagged it as an open question. Skipped — Chapter 14 will write the directory when there's actual CI to put in it.
 
-1. **Bootstrap Next.js**
-   - `pnpm create next-app@latest claude-todo-app --typescript --tailwind --app --no-src-dir --no-eslint --use-pnpm --import-alias "@/*"`
-   - Move generated files up into the repo root (we already have `CLAUDE.md`, `PRODUCT_SPEC.md`, etc. checked in), reconciling any clashing `.gitignore`/`README.md`.
-   - `--no-eslint` because we use Biome (§9). `--no-src-dir` because the repo layout in `CLAUDE.md` §3 has `app/` at the root.
+### What we asked Claude Code
 
-2. **Tighten TypeScript**
-   - Extend the generated `tsconfig.json` with `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `forceConsistentCasingInFileNames`. `strict: true` is already set by Next.
+This was the first chapter that involved real shell work, not just markdown. A few patterns emerged:
 
-3. **Add Biome**
-   - `pnpm add -D @biomejs/biome` → `pnpm exec biome init`.
-   - Set line width 100, two-space indent. Wire `pnpm lint` / `pnpm format` in `package.json`.
+- **The pre-execution plan paid off.** I asked Claude to draft Chapter 6 as a plan *before* running anything (then "go execute"). Reviewing the plan caught the `next-auth@beta` mistake before any code touched disk. Worth the 5 minutes every time.
+- **Claude handled the non-empty-target gotcha by itself.** `pnpm create next-app .` would clash with the existing markdown files. Claude scaffolded into `/tmp/cn-scaffold` and `rsync`'d back, skipping `README.md` / `.gitignore` / `node_modules`. I didn't have to coach it — it noticed the conflict and routed around.
+- **Tool environment leaked through.** The bash environment had no `pnpm`, no `gh`, no Homebrew. Claude installed pnpm via `npm config set prefix ~/.npm-global && npm i -g pnpm` (user-local, no sudo) and `gh` via the prebuilt macOS arm64 release from `cli/cli`. Felt good — the *agent* unblocking itself rather than asking me to.
+- **Memory worked as advertised.** Two non-obvious quirks (the user-local pnpm path; pnpm 11's `allowBuilds` gate) went into project memory so the next session doesn't re-discover them.
 
-4. **Add Vitest**
-   - `pnpm add -D vitest @vitest/coverage-v8 happy-dom`.
-   - Minimal `vitest.config.ts`: node environment for `lib/`, happy-dom for any component tests later. Coverage thresholds 80% on `lib/` per §10.
-   - One trivial smoke test under `tests/unit/` so `pnpm test` returns green from day one.
+The one thing I had to set up by hand: `git config --global user.{name,email}` and `gh auth login`. The harness deliberately won't touch git config or run interactive auth — correct posture, even if it adds two pauses.
 
-5. **Add Playwright**
-   - `pnpm add -D @playwright/test` → `pnpm exec playwright install --with-deps chromium`.
-   - `playwright.config.ts` configured for `http://localhost:3000`, headless in CI, headed locally.
-   - One placeholder spec under `tests/e2e/` that loads `/` so `pnpm test:e2e` is wired.
+### Output
 
-6. **Add runtime deps** (install only — no usage yet)
-   - `pnpm add zod @asteasolutions/zod-to-openapi @scalar/nextjs-api-reference better-sqlite3 next-auth@beta @anthropic-ai/sdk`
-   - `pnpm add -D @types/better-sqlite3`
+Branch `chore/scaffold` → PR #1 → merged.
 
-7. **Environment template**
-   - Write `.env.example` with placeholders only: `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `AUTH_MICROSOFT_ENTRA_ID_ID`, `AUTH_MICROSOFT_ENTRA_ID_SECRET`, `ANTHROPIC_API_KEY`, `DATABASE_PATH=./data/todo.db`.
-   - Confirm `.env*` is gitignored (already is).
-
-8. **Repo skeleton directories** — empty `.gitkeep`s for now
-   - `lib/`, `lib/ai/`, `prompts/`, `tests/unit/`, `tests/e2e/`, `data/` (gitignored), `logs/` (gitignored).
-
-9. **`.claude/settings.json`**
-   - Encode §14: allow `pnpm *`, `npx playwright *`, `git *` (except force/no-verify), `gh *`, `node`, `tsc`, `biome *`, `sqlite3`, `az *`; deny `rm -rf *`, `git push --force*`, `git commit --no-verify*`.
-   - `PostToolUse` hook: run `biome format --write` on `*.ts`/`*.tsx` after Edit/Write.
-   - Skills + subagents directories created empty; they're built out in Chapter 13.
-
-10. **`.github/` skeletons** (workflow content stays empty; Chapter 14 fills them in)
-    - `PULL_REQUEST_TEMPLATE.md`, `ISSUE_TEMPLATE/bug.yml`, `ISSUE_TEMPLATE/feature.yml`, `CODEOWNERS` (owner: `@<my-handle>`), `dependabot.yml` (weekly, auto-merge minor/patch).
-    - `workflows/` directory exists but empty — keeps Chapter 14's diff focused on CI.
-
-11. **`README.md`**
-    - Short: one paragraph what it is, badges placeholder, "see `TUTORIAL.md` to follow along," license. Detail deferred until there's something to demo.
-
-12. **Smoke check**
-    - `pnpm dev` boots; `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm test:e2e` all green on the empty scaffold. **If any are red, fix the scaffold, not the rule.** (§11.)
-
-13. **First commit & push**
-    - Conventional commit: `chore: scaffold Next.js, TypeScript strict, Biome, Vitest, Playwright`.
-    - Feature branch `chore/scaffold` → PR → CI (none yet, so green by default) → squash merge → tag nothing yet.
-
-### What we'll ask Claude Code
-
-The plan above is what I'll hand Claude as the brief. Two interaction patterns I expect to lean on:
-
-- **Tight, parallel tool use.** Steps 2–6 are independent file edits + installs; I want Claude to batch them. If Claude serializes them, I'll redirect: "run those in parallel."
-- **Smoke-check discipline.** Step 12 is the moment to confirm reality matches the plan. I'll ask Claude to run all four commands and paste the output, not to claim success after the installs finish.
-
-One thing I won't hand to Claude: the actual `pnpm create next-app` invocation in step 1. Interactive scaffolders + agent shells are a bad combo. I'll run that one by hand, then hand the populated directory back.
-
-### Expected output
-
-Roughly 25–30 new/modified files. The PR diff should be almost entirely additive: configs, empty directories with `.gitkeep`, the `.env.example`, the skeleton workflows folder, two placeholder tests. Zero application code in `app/` beyond what `create-next-app` ships (we'll delete the default landing page in Chapter 12, not now — leaving it lets us prove `pnpm dev` boots).
-
-### Watch-outs (lessons-to-be)
-
-Things I expect to bite us, recorded now so we notice if they do:
-
-- **`create-next-app` defaults drift.** The flags above match Next 14/15 at time of writing; if Next 16 reorders prompts, the brief becomes stale.
-- **Biome vs. Next's ESLint baggage.** `--no-eslint` should keep this clean, but stray `eslint-config-next` references sometimes appear; grep for them.
-- **Playwright in CI.** Browser install is slow; Chapter 14 will need a cache step. Note it but don't solve it yet.
-- **Auth.js v5 beta.** Pinning to a specific beta avoids surprise breakage mid-tutorial. Record the exact version in the commit.
-- **`better-sqlite3` native build.** Needs Python + a C++ toolchain. Fine on macOS/Linux dev boxes; flag in `README.md` for Windows readers.
-
-### Open question for review
-
-Should the scaffold commit include the empty `.github/workflows/*.yml` files (with just a `name:` field) or skip the directory entirely until Chapter 14? Including them avoids a noisy "first CI" diff later; skipping them keeps this chapter honest about what's actually wired. Leaning toward **skip** — write the directory in Chapter 14 when we know what's in it.
-
-**Resolved at execution time:** skipped. No `workflows/` directory in this commit.
-
-### Where the plan was wrong
-
-Three things the plan got wrong, caught during execution:
-
-1. **`create-next-app` produced Next 16, not Next 14.** The plan said "Next 14+" generically; the scaffolder picked the latest (16.2.6) plus React 19.2 and Tailwind v4. Pinning a major version in `CLAUDE.md` §2 would have spared us the surprise. Action: update `CLAUDE.md` §2 to "Next 16 / React 19 / Tailwind v4."
-
-2. **pnpm's new `allowBuilds` gate is now mandatory.** pnpm 11 rewrote our `pnpm-workspace.yaml` with `allowBuilds: <pkg>: set this to true or false` placeholders and then *failed every subsequent command* until we resolved them to literal `true`/`false`. The plan didn't anticipate this — it's new behavior. Sharp, better-sqlite3, esbuild, biome, and unrs-resolver all needed explicit allow.
-
-3. **`exactOptionalPropertyTypes: true` is sharper than I expected.** Playwright's `defineConfig` rejects `workers: undefined` under this flag — the type is `string | number`, not `string | number | undefined`. Had to spread the property conditionally. Worth knowing for future configs: this flag is fine for *our* code but makes some library type-definitions awkward.
-
-### Smoke check (actual output, all green)
+- 32 files added: `app/`, `public/`, Tailwind/PostCSS, Biome / Vitest / Playwright configs, `package.json` + lockfile + `pnpm-workspace.yaml`, `.env.example`, `.claude/settings.json` (allow/deny + `PostToolUse` biome-format hook), `.github/` skeletons (PR template, CODEOWNERS, dependabot, two issue templates), `README.md`, two smoke tests, skeleton dirs (`lib/`, `lib/ai/`, `prompts/`, `data/`).
+- 1 modified: `TUTORIAL.md` (this chapter).
+- Smoke check, all green:
 
 ```
 $ pnpm typecheck   → tsc --noEmit (0 errors)
-$ pnpm lint        → biome check . (13 files, no issues)
-$ pnpm test        → vitest: 1 passed
+$ pnpm lint        → biome check . (13 files, clean)
+$ pnpm test        → vitest run (1 passed)
 $ pnpm build       → next build (4 static pages, 836ms compile)
-$ pnpm test:e2e    → playwright: 1 passed (chromium, 3.4s incl. webServer boot)
+$ pnpm test:e2e    → playwright (1 passed, 3.4s incl. webServer boot)
 ```
 
-### Output (this commit)
+### Lessons
 
-- 22 new files: configs, skeleton dirs with `.gitkeep`s, `.env.example`, `.claude/settings.json`, `.github/` skeletons, `README.md`, two placeholder tests, the create-next-app boilerplate (`app/`, `public/`, `next.config.ts`, `postcss.config.mjs`, `next-env.d.ts`).
-- 1 modified file: `TUTORIAL.md` (this chapter).
-- 1 lockfile: `pnpm-lock.yaml`.
-
-### Lessons (preliminary — fuller pass in the retrospective commit)
-
-- **Use a non-empty target dir trick.** Scaffolding into `/tmp/cn-scaffold` and rsync-merging back beat fighting `create-next-app .` over the existing markdown.
-- **Verify the smoke check actually runs the command, not just installs.** `pnpm install`'s success says nothing about whether `tsc` returns 0. Run all four commands.
-- **Don't trust "Aborting installation" alone.** `create-next-app` printed a scary abort while having successfully installed everything. Read the line above the error before reacting.
+- **Plan, then execute, then rewrite the plan as a retrospective.** The Chapter 6 narrative existed in three states: plan, plan-with-status-marker, retrospective. Each had a job. Reading the plan caught the `next-auth@beta` mistake. Reading the executed-with-marker version while the dust settled caught the `CLAUDE.md` §2 version drift. The retrospective (this section) is what readers see.
+- **Don't trust install output as a smoke check.** `create-next-app` printed `Aborting installation` while having successfully installed every package — pnpm 11's ignored-builds error formats like a fatal abort. The actual smoke check is `pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm test:e2e`. Run all five, not "did install succeed."
+- **pnpm 11 changed shape mid-cycle.** The `allowBuilds:` placeholders are mandatory — every subsequent pnpm command fails until they resolve to `true`/`false`. Worth a memory entry. If you start a project today, expect to make this decision on your first install.
+- **`exactOptionalPropertyTypes` bites third-party types harder than your own.** Playwright's `defineConfig` rejects `workers: undefined` because its declared type is `string | number`. Fixed with a conditional spread (`...(process.env.CI ? { workers: 1 } : {})`). Keep the flag — but be ready to spread-around config files.
+- **The version pin matters.** `create-next-app` picked Next 16 / React 19 / Tailwind v4 — newer than the "14+" the spec implied. We patched `CLAUDE.md` §2 in this same PR. Future Chapter 6 forks: pin actual major versions, not minimums.
+- **The agent will unblock itself if you let it.** No pnpm? install user-local. No `gh`? curl the binary. The pattern I want to repeat: tell Claude the goal, let it find the path. The pattern I want to avoid: micro-managing each shell command.
 
 ---
 
-## Chapter 7 — Storage layer with TDD ⏳
+## Chapter 7 — Storage layer with TDD ✅
 
-*Will cover: writing the storage tests from `TEST_CASES.md` §4 first, then implementing `lib/storage.ts` to pass them. Demo of how Claude Code uses tests to drive implementation.*
+### Goal
+First real code in the repo. Implement `lib/storage.ts` — user-scoped CRUD over SQLite — and prove correctness via the 12 test cases from `TEST_CASES.md` §4. Demo of how Claude Code uses a pre-written test catalog to drive implementation.
+
+### Decisions
+
+- **TDD red → green, but without ceremony.** Tests first, fail (red), implementation, pass (green). We didn't write tests one at a time; the whole `tests/unit/storage.test.ts` went in before any `lib/storage.ts` existed. The "red" was confirming `Cannot find module '@/lib/storage'`, not failing assertions on stubs.
+- **`TEST_CASES.md` §4 *is* the spec.** No separate planning doc this time. The GWT table mapped 1:1 to `describe` / `it` blocks. Twelve tests in, twelve tests later.
+- **Two-tier db access.** `openDb(path)` is uncached (caller owns lifecycle — used by tests). `getDb()` is the env-driven production singleton. Same schema bootstrap, different sharing rules. Tests stay isolated without mocks.
+- **Real temp SQLite per test, not mocks.** Per `CLAUDE.md` §10. `mkdtempSync(tmpdir(), …)` in `beforeEach`, `rmSync(…, recursive: true)` in `afterEach`. ~3ms overhead per test, worth it.
+- **`rowid`-based cursor pagination.** Tasks order by SQLite's implicit `rowid` (monotonic on insert), cursor is `base64url(rowid)`. Chose this over `(created_at, id)` row-value comparison because (a) `Date.toISOString()` collides when 100 inserts happen in the same millisecond — exactly the TC-S-08 scenario — and (b) keeping the cursor opaque from outside is good API hygiene. `id` (UUID) stays the public handle.
+- **Zod at the trust boundary, custom errors above.** `addTask` calls `NewTaskInputSchema.safeParse`; on failure it wraps Zod's issues into our own `ValidationError`. Same shape will work for Route Handlers in Chapter 9 — they re-throw `ValidationError` as 400. `getTask` / `listTasks` skip Zod on internal calls (trust the caller; the userId comes from auth middleware, not the wire).
+- **Tomb-stoned soft-delete is invisible everywhere.** Once `deleted_at` is set, `getTask` returns null, `listTasks` skips the row, `markDone`/`softDelete` throw `NotFoundError`. There is *no* "with-deleted" mode in the API — admin restore is out of scope.
+- **Rejected: a separate `lib/db.ts` for connection setup.** Considered splitting `openDb`/`getDb` from the CRUD functions. Decided no: 200 lines is well under the §9 file-size ceiling, the SQL schema lives next to the queries that use it, and a future split is trivial.
+
+### What we asked Claude Code
+
+One sentence: "Write Chapter 7 — storage layer, TDD style, the 12 test cases in TEST_CASES.md §4." That was it. Claude already had the spec, the test catalog, and the CLAUDE.md rules from session context; nothing else needed re-stating.
+
+A few things that worked:
+
+- **Letting Claude pick the tactics.** I didn't tell Claude how to do pagination, what to use for IDs, or how to structure the error types. Claude picked `rowid` cursors, `randomUUID`, custom error subclasses with optional `issues[]`. All defensible. If I'd specified each, the chapter would be a list of my preferences instead of an example of agentic design.
+- **The "smoke check" pattern from Chapter 6 carrying forward.** Claude ran `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm test:cov` after implementation — not because I asked, but because Chapter 6's lessons set the precedent. Memory + the executed prior chapter both reinforced it.
+- **Biome doing the cleanup.** Two lint passes auto-fixed format + organize-imports without manual edits. The `PostToolUse` hook on Edit/Write means most files were already correct when lint ran; the remaining issues (Biome's `organizeImports` grouping) were one `--fix --unsafe` away.
+
+What surprised me: **Claude designed past the test cases.** TC-S-07 only asserts soft-deleted rows hide from `listTasks`, but Claude also made `getTask` return null for deleted rows owned by the same user — the right call (no zombie reads) but not strictly required by the spec. Worth noting in code review: agentic generalization is usually right, but it's the kind of thing that quietly expands behavior without a spec update.
+
+### Output
+
+Branch `feat/storage-layer` → PR stacked on the docs PR.
+
+- 4 new: `lib/errors.ts` (16 lines), `lib/models.ts` (32 lines), `lib/storage.ts` (200 lines), `tests/unit/storage.test.ts` (150 lines, 13 tests).
+- 1 modified: `vitest.config.ts` — added `resolve.alias` for `@/*` so vitest honors the tsconfig path alias.
+
+Test + coverage output:
+
+```
+Test Files  2 passed (2)
+     Tests  14 passed (14)
+
+% Coverage report from v8
+------------|---------|----------|---------|---------|-------------------
+File        | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+------------|---------|----------|---------|---------|-------------------
+All files   |   94.66 |    94.11 |   92.85 |   94.66 |
+ errors.ts  |     100 |      100 |     100 |     100 |
+ models.ts  |     100 |      100 |     100 |     100 |
+ storage.ts |   93.04 |    93.54 |    90.9  |  93.04  | 49-54, 131-132
+```
+
+The two uncovered ranges are intentional: lines 49–54 are `getDb()`'s env-var path (tests use `openDb` directly so they don't depend on mutating `process.env`); lines 131–132 are the "invalid cursor" branch (no test asserts the error message — the API layer will, in Chapter 9).
+
+### Lessons
+
+- **Tests catalog → tests file is a 1:1 translation, not a creative act.** The hard part — figuring out what to test — was done weeks ago in `TEST_CASES.md`. The implementation chapter doesn't need to argue about behavior, it just translates GWT into vitest. Wrap a session on test catalogs early; the implementation chapters get cheaper.
+- **Vitest doesn't honor tsconfig paths by default.** Either install `vite-tsconfig-paths` or set `resolve.alias` in `vitest.config.ts`. We did the latter — one fewer plugin. Worth committing under `CLAUDE.md` §10 for future test files.
+- **The "real temp DB" rule is cheaper than it sounds.** Total test runtime: 30ms across 13 tests, each opening its own SQLite file. Mocks would have saved ~25ms and cost us the Chapter 7 lesson about cursor collisions under same-millisecond `created_at`. Not worth it.
+- **`exactOptionalPropertyTypes` keeps biting.** Had to use `cursor?: string | null | undefined` instead of `cursor?: string | null` — when the field is *both* optional and nullable, all three states must be in the union. Annoying. Worth it.
+- **Biome's `organizeImports` ≠ CLAUDE.md §9.** Biome groups `node:` + external into one block, separated from local. CLAUDE.md §9 specifies three groups. Biome won; updating §9 is on the followup list. Pick one source of truth before the conventions diverge further.
+- **The agent generalized past the spec on soft-delete.** `getTask` hiding soft-deleted rows wasn't a TC-S-07 requirement, but it's correct. Lesson for *reviewing* agent code: read the diff for behavior the tests don't cover. Where Claude generalized, decide if you want it or not; if you do, write the test.
 
 ---
 
@@ -410,4 +396,4 @@ $ pnpm test:e2e    → playwright: 1 passed (chromium, 3.4s incl. webServer boot
 
 ---
 
-*Last updated: 2026-05-16 — through Chapter 5; Chapter 6 drafted as pre-execution plan, pending scaffold.*
+*Last updated: 2026-05-16 — through Chapter 7 (storage layer landed, 14 tests, 94.66% coverage).*
