@@ -37,7 +37,7 @@ The "What we asked Claude Code" sections are the heart of this tutorial. The goa
 - [Chapter 9 — The public REST API](#chapter-9--the-public-rest-api) ✅
 - [Chapter 10 — OpenAPI docs](#chapter-10--openapi-docs) ✅
 - [Chapter 11 — AI features with prompt engineering](#chapter-11--ai-features-with-prompt-engineering) ✅
-- [Chapter 12 — Responsive web UI](#chapter-12--responsive-web-ui) ⏳
+- [Chapter 12 — Responsive web UI](#chapter-12--responsive-web-ui) ✅
 - [Chapter 13 — Claude Code superpowers: skills, subagents, MCP, hooks](#chapter-13--claude-code-superpowers-skills-subagents-mcp-hooks) ⏳
 - [Chapter 14 — CI/CD with GitHub Actions](#chapter-14--cicd-with-github-actions) ⏳
 - [Chapter 15 — Deploying to Azure](#chapter-15--deploying-to-azure) ⏳
@@ -605,9 +605,90 @@ Test Files  14 passed (14)
 
 ---
 
-## Chapter 12 — Responsive web UI ⏳
+## Chapter 12 — Responsive web UI ✅
 
-*Will cover: Tailwind mobile-first patterns, breakpoints, touch target sizes, focus states, testing at 375 / 768 / 1280 widths, and running Lighthouse for accessibility.*
+### Goal
+A signed-in user can land at `/`, click through SSO, see their tasks, add / done / delete, manage PATs, and ask Claude to prioritize or summarize. Mobile-first throughout. The API surface from Chapters 7–11 finally has a face.
+
+### Decisions
+
+- **Two distinct entry points: `/` and `/app`.** Landing page (`app/page.tsx`) is public; everything authenticated lives under `app/app/`. Route group with parens (`app/(app)/`) was my first stab — it doesn't add a path segment, which collided the authenticated page with the landing at `/`. Switched to plain `app/app/` so URLs are honest (`/app`, `/app/settings`).
+- **Server Actions for mutations, Server Components for reads.** `addTaskAction`, `markStatusAction`, `softDeleteAction`, `prioritizeAction`, `summaryAction`, `issuePatAction`, `revokePatAction` all live in `app/app/actions.ts`. Forms point at them directly; no separate API routes. The `/api/v1/*` routes from Chapter 9 stay focused on external API consumers (Bearer tokens) and stay untouched.
+- **Action results, not exceptions.** Server Actions return a tagged `ActionResult<T>` = `{ ok: true, data } | { ok: false, error, details? }`. The UI uses `useActionState` to render inline errors (PII, validation). Thrown errors would have bubbled up as 500s; tagged results let the form show a calm red message and keep the page interactive.
+- **Mobile-first via Tailwind utilities, no component library.** Plain utility classes throughout. Three concrete uses before extracting (CLAUDE.md §9). The patterns I keep reusing — `min-h-11`, `focus-visible:ring-2 focus-visible:ring-neutral-900`, `rounded-md border border-neutral-200 bg-white p-3` — could become a `<Button>` / `<Card>` later, not now.
+- **44px touch targets via `min-h-11`** (`min-height: 44px`). Applied to every interactive element. CLAUDE.md §7 requires this; making it a class-level habit means nobody has to remember.
+- **Forged session cookies for E2E, not OAuth mocking.** Playwright tests sign a NextAuth-compatible JWT with the test `AUTH_SECRET` and drop it into `next-auth.session-token`. The dev server (started by Playwright with the matching secret) accepts it as if real OAuth happened. Cleaner than intercepting OAuth callbacks; matches the spec hint ("Mock SSO providers in tests").
+- **Shared test env via `playwright.config.ts`.** `DATABASE_PATH`, `AUTH_SECRET`, `NEXTAUTH_URL`, `ANTHROPIC_API_KEY` are set on both `webServer.env` (so the dev server sees them) and `process.env` (so the test helpers see them). One source of truth, no copy/paste.
+- **Confirm dialog for PAT revocation.** `window.confirm()` is unfashionable but it works on every browser, requires zero deps, and matches the destructiveness ("anyone using this token loses access immediately"). A modal component is a Chapter 13 nicety.
+- **Sign-in flow points at `/api/auth/signin`.** NextAuth's built-in provider chooser. Not the most beautiful page, but it works and the chapter is about *our* UI, not auth UI. Building a custom signin page would have been scope creep.
+- **Rejected: a hamburger menu on mobile.** Two nav items ("Tasks", "Settings") plus brand and sign-out fit comfortably at 375px. A hamburger would have added JS for state, accessibility wiring, and tests for a problem we don't have.
+
+### What we asked Claude Code
+
+One-sentence brief: "Chapter 12, responsive web UI, mobile-first." The chapter naturally split into four passes:
+
+1. **Public landing page.** Tested first because it has no auth dependency — `pnpm dev` + `curl localhost:3000` would render it. Fast feedback loop.
+2. **Authenticated layout + task list page.** First time I had to think about Server Action ergonomics. Landed on `ActionResult` after a small detour through "throw and let mapError handle it" — fine for API routes, ugly for forms because thrown errors break the UX.
+3. **Settings page.** Almost a copy-paste of the task page's shape, which validated the patterns. Three concrete uses gets us to a `<Card>` component later if it's still useful.
+4. **Playwright E2E.** The session-cookie helper was the big unlock — once it worked, three meaningful authenticated tests followed in 20 minutes.
+
+Things worth noting:
+
+- **`app/(app)/` was the wrong call.** Next.js route groups with parens don't add a path segment. I wanted authenticated pages at `/app` but `(app)/page.tsx` mapped to `/`, silently shadowing the landing. The build succeeded — Next picked one without warning. The first `pnpm build` after the move was when I caught it: route output showed `/` and `/settings` instead of `/app` and `/app/settings`. **Always read the build output for the path list, not just the success line.**
+- **`role="alert"` double-match.** First Playwright run failed because `getByRole("alert")` matched both my error message AND Next.js's hidden `#__next-route-announcer__` div. Scoped the locator to `getByTestId("add-task-form")` to disambiguate. Lesson for the chapter: **`data-testid` on stable containers is worth the visual noise** — it gives tests a precise scope without coupling to copy or markup.
+- **`void` vs `undefined` in TypeScript.** `() => { addTask(...) }` infers as `() => void`; my `toResult<T>` helper wanted `T = undefined`. The fix is `() => { addTask(...); return undefined }`. Wordy, but the type now says what it means. Worth knowing: `void` is a return-type-only annotation, not assignable to `undefined`.
+- **Playwright's webServer inherits a fresh shell.** The `env` block on `webServer` doesn't propagate to *test workers* — those use `process.env` from the Playwright config process. I had to set the env in *both* places. The pattern in `playwright.config.ts` (the `for` loop that copies `TEST_ENV` into `process.env`) keeps the two in sync.
+
+### Output
+
+Branch `feat/web-ui` → PR.
+
+**New files (10):**
+- `app/page.tsx` — full rewrite of the landing
+- `app/app/layout.tsx` — authenticated shell with top nav + sign-out
+- `app/app/page.tsx` — task list (Server Component)
+- `app/app/settings/page.tsx` — PAT management (Server Component)
+- `app/app/actions.ts` — Server Actions for all mutations
+- `app/app/add-task-form.tsx`, `task-row.tsx`, `ai-panel.tsx`, `signout-button.tsx` — client components on the task page
+- `app/app/settings/new-pat-form.tsx`, `pat-row.tsx` — client components on the settings page
+
+**Modified (3):**
+- `app/layout.tsx` — site metadata + body background
+- `playwright.config.ts` — shared test env (DATABASE_PATH, AUTH_SECRET, NEXTAUTH_URL)
+- `tests/helpers/playwright-auth.ts` (new) — forge NextAuth session cookies for E2E
+
+**Tests:**
+```
+Unit: 107 passed (15 files)
+E2E:   11 passed (4 files)
+       — 6 landing across 375/768/1280 viewports (renders + no horizontal scroll)
+       — 3 task flows (add, done, PII rejection)
+       — 1 PAT issue (TC-E2E-07)
+       — 1 pre-existing smoke
+```
+
+**Build routes (15 total):**
+```
+/, /api/auth/[...nextauth], /api/docs, /api/openapi.{json,yaml},
+/api/v1/me, /pats, /pats/[id], /tasks, /tasks/[id], /tasks/prioritize, /tasks/summary,
+/app, /app/settings
+```
+
+### Lessons
+
+- **Server Actions want tagged results, not exceptions.** Thrown errors in Server Actions surface as 500s that wipe the page; a tagged `ActionResult<T>` keeps the form interactive and lets you render inline messages with `useActionState`. Same data flow as API handlers + `mapError`, different presentation contract.
+- **Read the `pnpm build` route table on every PR.** Next.js doesn't warn when two files map to the same path under a route group — it just picks one. The two-line table at the end of `next build` is the cheapest sanity check; make a habit of glancing at it before merging UI changes.
+- **`data-testid` on form/section containers earns its keep.** It's noise in the markup but it gives Playwright a stable, scoped locator that survives copy changes, role additions, and Next.js's hidden a11y helpers (route announcer, etc.).
+- **Forge cookies, don't mock OAuth.** Setting a NextAuth-signed JWT directly is ~30 lines, works across all browsers Playwright supports, and survives provider changes. Mocking the OAuth handshake is fragile and ties tests to NextAuth's redirect dance.
+- **The webServer's env is not the test worker's env.** Playwright's config-time `process.env` copy is a small habit that prevents a class of "works in dev, fails in CI" surprises. The pattern lives in `playwright.config.ts`; replicate it in any new test that needs shared state.
+- **Mobile-first is a *default*, not a checklist item.** Writing the layout at 375px first and adding `sm:` / `md:` modifiers as the viewport grows produces UIs that work without horizontal scroll without me having to think about it. Trying it the other way around (desktop-first with `max-w` fallbacks) is harder, not easier.
+- **`min-h-11` everywhere on interactive elements.** Hardcoding 44px touch targets at the utility level — instead of relying on a `<Button>` component that might not exist yet — means nobody has to remember the rule.
+
+### What's not in this PR
+
+- **TC-E2E-06 (AI prioritize from UI):** the AI panel is built and accessible at runtime, but stubbing the Anthropic SDK from inside Playwright requires plumbing the test hooks (`_setAnthropicClientForTesting`) into the dev server process. That's Chapter 13's job once we wire the test harness more broadly.
+- **TC-E2E-10..12 (focus order, axe-core, Lighthouse):** out-of-band tooling. Deferred to Chapter 14 (CI) where they're cheap to run as scheduled jobs.
+- **`/api/auth/signin` styling.** Uses NextAuth's default provider chooser. Custom signin page would be a Chapter 12.5 detour.
 
 ---
 
@@ -667,4 +748,4 @@ Test Files  14 passed (14)
 
 ---
 
-*Last updated: 2026-05-16 — through Chapter 11 (OpenAPI 3.1 spec at /api/docs; AI features wired: prioritize + summary; 98 tests).*
+*Last updated: 2026-05-16 — through Chapter 12 (responsive web UI live at /app; 107 unit + 11 E2E tests).*
