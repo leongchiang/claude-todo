@@ -632,6 +632,8 @@ One-sentence brief: "Chapter 12, responsive web UI, mobile-first." The chapter n
 3. **Settings page.** Almost a copy-paste of the task page's shape, which validated the patterns. Three concrete uses gets us to a `<Card>` component later if it's still useful.
 4. **Playwright E2E.** The session-cookie helper was the big unlock — once it worked, three meaningful authenticated tests followed in 20 minutes.
 
+5. **Design improvement pass.** After the initial build we put the app in front of a browser and found the default neutral palette felt generic. The structural work was solid; the visual finish wasn't. See the next section for the story.
+
 Things worth noting:
 
 - **`app/(app)/` was the wrong call.** Next.js route groups with parens don't add a path segment. I wanted authenticated pages at `/app` but `(app)/page.tsx` mapped to `/`, silently shadowing the landing. The build succeeded — Next picked one without warning. The first `pnpm build` after the move was when I caught it: route output showed `/` and `/settings` instead of `/app` and `/app/settings`. **Always read the build output for the path list, not just the success line.**
@@ -683,6 +685,36 @@ E2E:   11 passed (4 files)
 - **The webServer's env is not the test worker's env.** Playwright's config-time `process.env` copy is a small habit that prevents a class of "works in dev, fails in CI" surprises. The pattern lives in `playwright.config.ts`; replicate it in any new test that needs shared state.
 - **Mobile-first is a *default*, not a checklist item.** Writing the layout at 375px first and adding `sm:` / `md:` modifiers as the viewport grows produces UIs that work without horizontal scroll without me having to think about it. Trying it the other way around (desktop-first with `max-w` fallbacks) is harder, not easier.
 - **`min-h-11` everywhere on interactive elements.** Hardcoding 44px touch targets at the utility level — instead of relying on a `<Button>` component that might not exist yet — means nobody has to remember the rule.
+
+### Design improvement pass
+
+After the initial build was functional we did a review pass and the feedback was direct: _"the responsive GUI you built is not very professional."_ That's a useful signal, and the honest response to it surfaced an important process gap.
+
+**The root cause: Claude designs in the dark.**
+
+Claude Code wrote markup it could never see. It had the Tailwind docs and the class names but no pixels. The initial UI was structurally correct — right touch targets, right HTML semantics, right responsive breakpoints — but the default neutral-grey palette with no accent color reads as a prototype, not a product.
+
+**The fix: a screenshot-first review loop.**
+
+Instead of asking for generic "improvements", we agreed on a concrete process:
+
+1. Push the branch, open the dev server.
+2. Share a browser screenshot before asking for changes.
+3. Describe changes in reference terms ("the button should read like Stripe's primary CTA") not adjective terms ("make it more professional").
+
+Then we applied five targeted improvements in one pass:
+
+| Change | File | Effect |
+|--------|------|--------|
+| Indigo accent everywhere | `task-row.tsx`, `ai-panel.tsx`, `add-task-form.tsx`, `settings/*` | Consistent brand color; buttons feel purposeful |
+| Task row status tints | `task-row.tsx` | Open: `border-l-2 border-l-indigo-400 bg-white`; done: `bg-neutral-50 border-neutral-100`. Status readable without text |
+| Landing hero redesign | `page.tsx` | `sm:text-6xl font-bold`, "Open-source tutorial" pill badge, two-column CTA row |
+| AI panel as gradient card | `ai-panel.tsx` | `bg-gradient-to-br from-indigo-50 to-white`, `✦ Claude AI` header in indigo |
+| Count badges + empty state | `app/page.tsx` | Indigo pill counts, dashed-border "All clear" card with ✓ |
+
+None of these required new components or layout changes — they were pure class edits. Five targeted class changes transformed "prototype" into "shipped product".
+
+**Lesson: visual quality is a process problem, not a prompting problem.** The right ask isn't "make it look better" — it's "here's a screenshot, here's a reference, change _this class_ to _this value_." Claude Code responds well to precise, verifiable instructions. Vague adjectives ("professional", "clean") produce vague results.
 
 ### What's not in this PR
 
@@ -748,4 +780,4 @@ E2E:   11 passed (4 files)
 
 ---
 
-*Last updated: 2026-05-16 — through Chapter 12 (responsive web UI live at /app; 107 unit + 11 E2E tests).*
+*Last updated: 2026-05-20 — through Chapter 12 (responsive web UI live at /app; design improvement pass; 107 unit + 11 E2E tests).*

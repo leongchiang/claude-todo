@@ -49,14 +49,25 @@ export function AiPanel({ initialOpenCount }: Props) {
   };
 
   return (
-    <section data-testid="ai-panel" className="rounded-md border border-neutral-200 bg-white p-4">
+    <section
+      data-testid="ai-panel"
+      className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-4 shadow-sm"
+    >
+      <div className="mb-3 flex items-center gap-1.5">
+        <span className="text-indigo-500" aria-hidden="true">
+          ✦
+        </span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+          Claude AI
+        </span>
+      </div>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={onPrioritize}
           disabled={pending || initialOpenCount === 0}
           aria-label="Ask Claude to rank my open tasks"
-          className="inline-flex min-h-11 items-center rounded-md bg-neutral-900 px-4 text-sm font-medium text-white hover:bg-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-2 disabled:opacity-50"
+          className="inline-flex min-h-10 items-center rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2 disabled:opacity-50"
         >
           {pending ? "Asking Claude…" : "Prioritize my tasks"}
         </button>
@@ -65,29 +76,32 @@ export function AiPanel({ initialOpenCount }: Props) {
           onClick={onSummary}
           disabled={pending}
           aria-label="Ask Claude to summarise today"
-          className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 bg-white px-4 text-sm font-medium text-neutral-900 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-2 disabled:opacity-50"
+          className="inline-flex min-h-10 items-center rounded-lg border border-indigo-200 bg-white px-4 text-sm font-medium text-indigo-700 transition hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2 disabled:opacity-50"
         >
           Today&apos;s summary
         </button>
       </div>
       {error ? (
-        <p role="alert" className="mt-3 text-sm text-red-700">
+        <p role="alert" className="mt-3 text-sm text-red-600">
           {error}
         </p>
       ) : null}
       {summary ? (
-        <p className="mt-3 text-sm text-neutral-800" data-testid="summary-result">
+        <p
+          className="mt-3 rounded-lg border border-indigo-100 bg-white p-3 text-sm leading-relaxed text-neutral-800"
+          data-testid="summary-result"
+        >
           {summary}
         </p>
       ) : null}
       {ranked && ranked.length > 0 ? (
-        <ol className="mt-3 space-y-1 text-sm text-neutral-800" data-testid="prioritize-result">
+        <ol className="mt-3 space-y-1.5 text-sm text-neutral-800" data-testid="prioritize-result">
           {ranked.map((r) => (
             <li key={r.id} className="flex items-baseline gap-2">
-              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded bg-neutral-200 px-1 text-xs font-medium text-neutral-900">
+              <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded bg-indigo-600 px-1 text-xs font-semibold text-white">
                 {r.rank}
               </span>
-              <span className="italic">{r.reason}</span>
+              <span className="text-neutral-700 italic">{r.reason}</span>
             </li>
           ))}
         </ol>
