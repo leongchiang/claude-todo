@@ -724,15 +724,87 @@ None of these required new components or layout changes — they were pure class
 
 ---
 
-## Chapter 13 — Claude Code superpowers: skills, subagents, MCP, hooks ⏳
+## Chapter 13 — Claude Code superpowers: skills, subagents, MCP, hooks ✅
 
-*Will cover:*
-- *Installing one community skill from `anthropics/skills` and using it*
-- *Writing a custom skill (`task-clarity-review`) and invoking it*
-- *Writing a custom subagent (`api-doc-writer`) and delegating to it*
-- *Connecting an MCP server (filesystem) and using it during the build*
-- *Adding a `PostToolUse` hook to auto-format with Biome*
-- *Using auto-memory to remember project quirks across sessions*
+### Goal
+
+Show the five Claude Code features that live above "just chat": custom slash commands (skills), delegated subagents, MCP servers, automated hooks, and persistent memory. None of these require backend changes — they're all config files and markdown. But they compound: a good skill definition, wired to the right hook, reading memory about past mistakes, is how Claude Code goes from "smart assistant" to "team member who knows the project".
+
+### Decisions
+
+- **Skills as slash commands, not prompts.** A skill is a `.claude/skills/<name>/SKILL.md` file. When the user types `/<name>`, Claude reads it and follows the instructions. The skill we built — `task-clarity-review` — takes a vague task title and returns a scored clarity check plus 2–3 actionable rewrites. The key design decision: skills work best when they have a _narrow input contract_ ("give me a title") and a _fixed output format_ (the template). Open-ended instructions produce open-ended responses.
+- **Subagents for delegation, not decomposition.** A subagent is a `.claude/agents/<name>.md` file. Claude Code can spawn it via the `Agent` tool, giving it a focused persona and a single job. The `api-doc-writer` agent has one job: read a route handler, read the Zod schemas, and return a `registry.registerPath(...)` call. It can't write files; it returns output to the caller who reviews and pastes. This is the right model for tasks where you want a second opinion or a specialist, not autonomous action.
+- **Filesystem MCP for project-wide reads without permission prompts.** The `.mcp.json` at the project root registers `@modelcontextprotocol/server-filesystem` scoped to this directory. With it, Claude can read any project file in a subagent or skill invocation without requiring the user to approve each `Read` call. Scoped to the project root — not `~` or `/` — so the blast radius is limited.
+- **`PostToolUse` hook already existed.** The biome auto-format hook was already in `.claude/settings.json` from Chapter 9. It fires on every `Edit` or `Write` call, formats the file in-place, and silences output. Nothing to add here except to call it out explicitly in the tutorial as the right place for mechanical, always-on enforcement. Hooks are better than asking Claude to remember to format.
+- **Auto-memory is passive.** The memory system at `~/.claude/projects/.../memory/` accumulates `user`, `feedback`, `project`, and `reference` records across sessions. We don't write new memory as part of this chapter's code — we document _what has already been remembered_ (pnpm path, build-time env trap, zod-to-openapi extension location) and explain the pattern so readers can apply it to their own forks.
+
+### What we built
+
+| Feature | File | Description |
+|---------|------|-------------|
+| Custom skill | `.claude/skills/task-clarity-review/SKILL.md` | Reviews a task title on Specific / Actionable / Bounded axes; suggests 2–3 rewrites |
+| Custom subagent | `.claude/agents/api-doc-writer.md` | Reads a route handler + Zod schemas; returns a `registerPath()` call for `lib/openapi.ts` |
+| MCP server | `.mcp.json` | Filesystem server scoped to project root — project-wide reads without per-call prompts |
+| `PostToolUse` hook | `.claude/settings.json` (already present) | `biome format --write` fires on every Edit/Write for `.ts`/`.tsx`/`.json` |
+| Auto-memory | `~/.claude/projects/.../memory/` | Passive — accumulates across sessions; this chapter documents what's in it |
+
+### What we asked Claude Code
+
+Skills and subagents were each a one-shot write: "write a `task-clarity-review` skill that…" with the format spelled out in the prompt. The agents file was the same. The MCP config was two lines.
+
+The more interesting conversation was about _when_ to reach for each tool:
+
+- **Skill** — when you want a repeatable, structured operation that the user invokes manually. Good for reviews, checklists, generators with a fixed output contract. Bad for long multi-step tasks (use an agent) or always-on automation (use a hook).
+- **Subagent** — when a task is big enough to warrant its own context, or when you want an independent read without the main conversation's biases. The `api-doc-writer` agent is stateless on purpose: it reads, it writes, it returns. No memory of prior routes.
+- **MCP** — when a skill or subagent needs to read files _without the user approving each one_. The filesystem server is the minimal viable MCP: no external deps, no tokens, just a scoped view of the project.
+- **Hook** — for mechanical enforcement that would be annoying as a reminder ("remember to format") but unobtrusive as automation. Formatting, lint, import ordering — all better as hooks.
+- **Memory** — for facts that are expensive to rediscover: the pnpm path, the build-time env trap, the zod extension location. Not for architecture or code patterns (the code is the doc); not for task state (use todos); only for the _non-obvious_ facts that burned you once.
+
+### Using the skill in practice
+
+```
+/task-clarity-review look into the slow query
+```
+
+Output:
+```
+Original: look into the slow query
+
+Clarity check:
+  Specific:   ⚠  Which query? Which endpoint?
+  Actionable: ⚠  "Look into" has no clear output
+  Bounded:    ⚠  Done when? When understood? When fixed?
+
+Alternatives:
+  1. Profile /api/v1/tasks list query and add a covering index if needed
+  2. Investigate slow tasks list query and file a fix ticket
+  3. Fix the slow tasks list query
+
+Recommended: #1 — names the endpoint, tool (profiling), and outcome (index or not).
+```
+
+The skill doesn't add a task to the database. It's a review tool, not a mutation. The user reads the output, picks a rewrite, and types the better title into the add-task form themselves. Keeping the skill read-only means it can be run speculatively without side effects.
+
+### Output
+
+Branch `feat/claude-code-superpowers` → PR.
+
+**New files (3):**
+- `.claude/skills/task-clarity-review/SKILL.md`
+- `.claude/agents/api-doc-writer.md`
+- `.mcp.json`
+
+**Unchanged (already wired in earlier chapters):**
+- `.claude/settings.json` — `PostToolUse` biome hook
+- `~/.claude/projects/.../memory/` — auto-memory
+
+### Lessons
+
+- **Skills need a narrow input contract.** "Review this task title" is a skill. "Help me be more productive" is a conversation. The format template in the SKILL.md is load-bearing — it's what makes the skill's output copy-pasteable.
+- **Subagents are specialists, not collaborators.** An agent that can write files can cause hard-to-undo changes; an agent that only returns output is safe to spawn speculatively. Restrict write access by design; the caller reviews before acting.
+- **MCP scope is a security boundary.** Scoping the filesystem MCP to the project root rather than `~` or `/` is not paranoia — it's the principle of least privilege. A malicious file in the project (e.g. a `package.json` with a crafted `name` field) can't read your SSH keys if the server doesn't have access to `~/.ssh`.
+- **Hooks beat reminders.** If you've asked Claude more than once to do something mechanical (format, lint, run a check), it belongs in a hook. Hooks are unconditional; reminders are forgotten.
+- **Memory is for facts, not recipes.** Saving "run pnpm format after edits" to memory is useless — Claude will follow it until it doesn't. Saving "pnpm binary is at `~/.npm-global/bin`" is useful — it's a concrete fact that doesn't change and that Claude can't infer from the code.
 
 ---
 
@@ -780,4 +852,4 @@ None of these required new components or layout changes — they were pure class
 
 ---
 
-*Last updated: 2026-05-20 — through Chapter 12 (responsive web UI live at /app; design improvement pass; 107 unit + 11 E2E tests).*
+*Last updated: 2026-05-20 — through Chapter 13 (skills, subagents, MCP, hooks, auto-memory).*
