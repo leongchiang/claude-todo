@@ -48,8 +48,13 @@ export function NewPatForm() {
 
   return (
     <div className="space-y-4">
-      <form ref={formRef} action={formAction} className="space-y-2" data-testid="new-pat-form">
-        <label htmlFor="pat-name" className="block text-sm font-medium text-neutral-900">
+      <form
+        ref={formRef}
+        action={formAction}
+        className="space-y-3 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm"
+        data-testid="new-pat-form"
+      >
+        <label htmlFor="pat-name" className="block text-sm font-semibold text-neutral-900">
           Issue a new token
         </label>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -61,18 +66,18 @@ export function NewPatForm() {
             placeholder="e.g. 'cli' or 'my laptop'"
             disabled={pending}
             aria-invalid={error ? "true" : undefined}
-            className="block w-full min-h-11 rounded-md border border-neutral-300 bg-white px-3 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900"
+            className="block min-h-11 w-full rounded-lg border border-neutral-300 bg-white px-3 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
           />
           <button
             type="submit"
             disabled={pending}
-            className="inline-flex min-h-11 items-center justify-center rounded-md bg-neutral-900 px-4 text-sm font-medium text-white hover:bg-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-2 disabled:opacity-50"
+            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2 disabled:opacity-50"
           >
             {pending ? "Issuing…" : "New token"}
           </button>
         </div>
         {error ? (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-red-600">
             {error}
           </p>
         ) : null}
@@ -82,26 +87,31 @@ export function NewPatForm() {
         <div
           data-testid="issued-pat"
           role="status"
-          className="space-y-3 rounded-md border border-amber-300 bg-amber-50 p-4"
+          className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4"
         >
-          <p className="text-sm font-medium text-amber-900">
-            Your token for &ldquo;{issued.name}&rdquo; — save it now. We never show it again.
-          </p>
-          <code className="block w-full overflow-x-auto rounded bg-white px-3 py-2 font-mono text-sm text-neutral-900">
+          <div className="flex items-start gap-2">
+            <span className="text-amber-500" aria-hidden="true">
+              ⚠
+            </span>
+            <p className="text-sm font-medium text-amber-900">
+              Token for &ldquo;{issued.name}&rdquo; — save it now. It won&apos;t be shown again.
+            </p>
+          </div>
+          <code className="block w-full overflow-x-auto rounded-lg border border-amber-200 bg-white px-3 py-2.5 font-mono text-sm text-neutral-800">
             {issued.token}
           </code>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={onCopy}
-              className="inline-flex min-h-11 items-center rounded-md bg-neutral-900 px-4 text-sm font-medium text-white hover:bg-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-2"
+              className="inline-flex min-h-10 items-center rounded-lg bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2"
             >
-              {copied ? "Copied!" : "Copy"}
+              {copied ? "✓ Copied!" : "Copy token"}
             </button>
             <button
               type="button"
               onClick={onDone}
-              className="inline-flex min-h-11 items-center rounded-md border border-neutral-300 bg-white px-4 text-sm font-medium text-neutral-900 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900"
+              className="inline-flex min-h-10 items-center rounded-lg border border-neutral-300 bg-white px-4 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600"
             >
               I&apos;ve saved it
             </button>

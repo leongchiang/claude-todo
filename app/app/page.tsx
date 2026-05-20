@@ -23,14 +23,27 @@ export default async function TasksPage() {
       <AiPanel initialOpenCount={open.items.length} />
 
       <section aria-labelledby="open-heading" className="space-y-3">
-        <h2
-          id="open-heading"
-          className="text-sm font-semibold uppercase tracking-wide text-neutral-600"
-        >
-          Open ({open.items.length})
-        </h2>
+        <div className="flex items-center justify-between">
+          <h2
+            id="open-heading"
+            className="text-sm font-semibold uppercase tracking-wide text-neutral-500"
+          >
+            Open tasks
+          </h2>
+          {open.items.length > 0 ? (
+            <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
+              {open.items.length}
+            </span>
+          ) : null}
+        </div>
         {open.items.length === 0 ? (
-          <p className="text-sm text-neutral-500">Nothing open. Add one above.</p>
+          <div className="rounded-xl border border-dashed border-neutral-200 bg-white px-6 py-10 text-center">
+            <p className="text-2xl" aria-hidden="true">
+              ✓
+            </p>
+            <p className="mt-2 text-sm font-medium text-neutral-600">All clear</p>
+            <p className="text-sm text-neutral-400">Add a task above to get started.</p>
+          </div>
         ) : (
           <ul className="space-y-2" data-testid="open-tasks">
             {open.items.map((t) => (
@@ -42,12 +55,17 @@ export default async function TasksPage() {
 
       {done.items.length > 0 ? (
         <section aria-labelledby="done-heading" className="space-y-3">
-          <h2
-            id="done-heading"
-            className="text-sm font-semibold uppercase tracking-wide text-neutral-600"
-          >
-            Recently done
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2
+              id="done-heading"
+              className="text-sm font-semibold uppercase tracking-wide text-neutral-500"
+            >
+              Done today
+            </h2>
+            <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-500">
+              {done.items.length}
+            </span>
+          </div>
           <ul className="space-y-2" data-testid="done-tasks">
             {done.items.map((t) => (
               <TaskRow key={t.id} id={t.id} title={t.title} notes={t.notes} status="done" />
