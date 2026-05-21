@@ -36,9 +36,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // CI: reuse the already-built .next (faster, matches prod binary).
-    // Local: dev server with HMR.
-    command: process.env.CI ? "pnpm start" : "pnpm dev",
+    command: "pnpm dev",
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
