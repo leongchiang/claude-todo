@@ -824,7 +824,7 @@ Every push to `main` and every PR should be gated by automated checks before a h
 - **Playwright failure artifact.** The E2E job uploads the Playwright report on failure. Without this, a flaky CI failure is almost impossible to diagnose — you get a test name and an error message, but no screenshot, no trace, no DOM snapshot. The artifact is retained 7 days; enough to investigate before it's irrelevant.
 - **CodeQL `security-extended`.** The default `security-and-quality` catches the OWASP top 10; `security-extended` adds higher-noise checks worth having on a public tutorial repo (where the code is also teaching patterns). High-severity findings block merge via branch protection.
 - **Dependabot `groups` for GitHub Actions.** Grouping minor/patch action updates into one PR per week keeps the PR list clean. Major action version bumps (e.g. `actions/checkout@v4 → v5`) are held for manual review — they often have breaking API changes.
-- **Node 20 LTS in CI, Node 24 in dev.** The app targets Node 20 LTS (the stable target for Azure App Service); developers run Node 24. Using 20 in CI catches any accidental use of Node 22/24-only APIs before they reach production.
+- **Node 22 in CI, Node 24 in dev.** pnpm 11 internally uses `node:sqlite` (added in Node 22) — running it on Node 20 crashes with `ERR_UNKNOWN_BUILTIN_MODULE` before a single workflow step executes. Node 22 is the current Active LTS and the minimum pnpm 11 supports (`>= 22.13`); Node 20 went end-of-active-LTS in October 2025.
 
 ### What we asked Claude Code
 
@@ -870,6 +870,7 @@ These cannot be automated from a workflow file — they require repo admin acces
 - **Workflows are code; treat them like code.** A workflow file that has never run is a hypothesis, not a guarantee. The first green CI run on a real PR is the only proof it works. Until then it's aspirational YAML.
 - **OIDC is the right default for Azure deploys.** Service principal credentials expire, get rotated wrong, and show up in incident reports. OIDC tokens are minted per-run, scoped to the federated subject, and can't be replayed. The setup is 10 minutes of `az` commands; the ongoing maintenance is zero.
 - **Split fast and slow jobs.** Lint + typecheck + unit tests complete in ~90 seconds. E2E takes 3–4 minutes. Keeping them separate means PR authors get quick feedback on the common failures (type errors, lint) before the slow check finishes.
+- **pnpm 11 requires Node ≥ 22.13.** The initial workflows used Node 20 LTS. First CI run failed immediately: `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` — pnpm 11 uses the built-in SQLite module which only ships with Node 22+. The fix was one line per workflow. Lesson: check `pnpm --version` compatibility matrix before picking a Node version; pnpm's own docs list the minimum Node at the top of each major release page.
 - **Build before E2E, not `next dev`.** Running E2E against the dev server feels faster to set up but hides build-time errors. Running against `next build` + `next start` means CI and production run the same binary. The few extra minutes are worth it.
 - **Never cancel a deploy in progress.** A half-deployed Next.js app can serve a mix of old and new chunks to different users — a race condition that's nearly impossible to reproduce. Serialise deploys; let them finish.
 
