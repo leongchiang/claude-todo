@@ -2,11 +2,7 @@
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/Users/Leon/Code/claude-todo"
-      ]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/Leon/Code/claude-todo"]
     }
   }
 }
