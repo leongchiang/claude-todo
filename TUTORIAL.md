@@ -808,9 +808,71 @@ Branch `feat/claude-code-superpowers` → PR.
 
 ---
 
-## Chapter 14 — CI/CD with GitHub Actions ⏳
+## Chapter 14 — CI/CD with GitHub Actions ✅
 
-*Will cover: `ci.yml` (lint + typecheck + test), `e2e.yml` (Playwright), `codeql.yml` (security scan), `dependabot.yml`, branch protection on `main`, signed commits, the deploy workflow.*
+### Goal
+
+Every push to `main` and every PR should be gated by automated checks before a human even looks at it. The goal is a pipeline where lint, type errors, unit test failures, security findings, and deploy failures are all loud and blocking — not silent and discovered in production.
+
+### Decisions
+
+- **Four workflows, one concern each.** `ci.yml` (lint + typecheck + unit tests), `e2e.yml` (Playwright), `codeql.yml` (security scan), `deploy.yml` (Azure). Splitting them means: a lint failure doesn't cancel the security scan; a slow E2E run doesn't block the fast unit tests; a deploy failure is isolated to the deploy job. Each can also be triggered, retried, or skipped independently.
+- **OIDC federation, zero long-lived secrets.** `deploy.yml` uses `azure/login@v2` with `client-id`, `tenant-id`, `subscription-id`. GitHub mints a short-lived OIDC token for each run; Azure's federated credential validates it. No `AZURE_CREDENTIALS` JSON blob, no service principal password, nothing that can leak and be replayed. The three IDs are not secret (they identify the federation relationship, not a credential).
+- **`cancel-in-progress: true` on CI and E2E, `false` on deploy.** Cancelling a stale lint run when a new commit arrives is fine — saves minutes. Cancelling an in-progress deploy would leave the app in a half-deployed state. The deploy group uses a queue (`cancel-in-progress: false`) so runs serialise rather than interrupt.
+- **Build-time env trap in deploy.** `next build` evaluates route module imports at build time. Any module that calls `requireEnv()` (throw on missing key) at module init level will crash the build in CI where `AUTH_SECRET` isn't available yet. The fix (already in place from Chapter 8): `process.env.X ?? ""` at init, validate at request time. The deploy workflow passes a `build-placeholder` for `AUTH_SECRET` to satisfy Next.js without exposing the real secret to the build step.
+- **Playwright needs a built app, not the dev server.** The E2E workflow runs `pnpm build` then `pnpm test:e2e`. `playwright.config.ts` starts `next start` (the production server) as the `webServer`. This catches build-only regressions that the dev server's Turbopack wouldn't show.
+- **Playwright failure artifact.** The E2E job uploads the Playwright report on failure. Without this, a flaky CI failure is almost impossible to diagnose — you get a test name and an error message, but no screenshot, no trace, no DOM snapshot. The artifact is retained 7 days; enough to investigate before it's irrelevant.
+- **CodeQL `security-extended`.** The default `security-and-quality` catches the OWASP top 10; `security-extended` adds higher-noise checks worth having on a public tutorial repo (where the code is also teaching patterns). High-severity findings block merge via branch protection.
+- **Dependabot `groups` for GitHub Actions.** Grouping minor/patch action updates into one PR per week keeps the PR list clean. Major action version bumps (e.g. `actions/checkout@v4 → v5`) are held for manual review — they often have breaking API changes.
+- **Node 22 in CI, Node 24 in dev.** pnpm 11 internally uses `node:sqlite` (added in Node 22) — running it on Node 20 crashes with `ERR_UNKNOWN_BUILTIN_MODULE` before a single workflow step executes. Node 22 is the current Active LTS and the minimum pnpm 11 supports (`>= 22.13`); Node 20 went end-of-active-LTS in October 2025.
+
+### What we asked Claude Code
+
+"Write four GitHub Actions workflows: ci.yml (lint + typecheck + unit tests on PR and push to main), e2e.yml (Playwright, upload report on failure), codeql.yml (JavaScript/TypeScript, nightly + PR), deploy.yml (OIDC → Azure App Service, no long-lived secrets). Node 20 LTS, pnpm 11, no cancel-in-progress on deploy."
+
+One pass, no iteration needed. The workflows are declarative YAML with well-established patterns — Claude knows them well. The only judgment calls were: OIDC vs service principal (always OIDC for new setups), `cancel-in-progress` on deploy (always false), and the build-placeholder pattern for `AUTH_SECRET`.
+
+### Output
+
+Branch `feat/ci-cd` → PR.
+
+**New files (4):**
+- `.github/workflows/ci.yml`
+- `.github/workflows/e2e.yml`
+- `.github/workflows/codeql.yml`
+- `.github/workflows/deploy.yml`
+
+**Modified (1):**
+- `.github/dependabot.yml` — added `groups: minor-and-patch` for GitHub Actions ecosystem
+
+### What to set up in GitHub (manual steps after merging this PR)
+
+These cannot be automated from a workflow file — they require repo admin access:
+
+1. **Branch protection on `main`:**
+   - Require PR before merging
+   - Required status checks: `Lint · Typecheck · Test`, `Playwright E2E`, `Analyze (javascript-typescript)`
+   - Require branches to be up to date before merging
+   - Do not allow bypassing the above settings
+
+2. **GitHub Environment `production`:**
+   - Go to Settings → Environments → New environment: `production`
+   - Add secrets: `AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+   - Add variables: `NEXTAUTH_URL`, `AZURE_WEBAPP_NAME`, `DATABASE_PATH`
+
+3. **Azure federated credential** (see Chapter 15 for the `az` commands):
+   - Create an app registration in Azure AD
+   - Add a federated credential: issuer `https://token.actions.githubusercontent.com`, subject `repo:leongchiang/claude-todo:environment:production`
+   - Grant the app `Contributor` on the App Service resource group
+
+### Lessons
+
+- **Workflows are code; treat them like code.** A workflow file that has never run is a hypothesis, not a guarantee. The first green CI run on a real PR is the only proof it works. Until then it's aspirational YAML.
+- **OIDC is the right default for Azure deploys.** Service principal credentials expire, get rotated wrong, and show up in incident reports. OIDC tokens are minted per-run, scoped to the federated subject, and can't be replayed. The setup is 10 minutes of `az` commands; the ongoing maintenance is zero.
+- **Split fast and slow jobs.** Lint + typecheck + unit tests complete in ~90 seconds. E2E takes 3–4 minutes. Keeping them separate means PR authors get quick feedback on the common failures (type errors, lint) before the slow check finishes.
+- **pnpm 11 requires Node ≥ 22.13.** The initial workflows used Node 20 LTS. First CI run failed immediately: `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` — pnpm 11 uses the built-in SQLite module which only ships with Node 22+. The fix was one line per workflow. Lesson: check `pnpm --version` compatibility matrix before picking a Node version; pnpm's own docs list the minimum Node at the top of each major release page.
+- **Build before E2E, not `next dev`.** Running E2E against the dev server feels faster to set up but hides build-time errors. Running against `next build` + `next start` means CI and production run the same binary. The few extra minutes are worth it.
+- **Never cancel a deploy in progress.** A half-deployed Next.js app can serve a mix of old and new chunks to different users — a race condition that's nearly impossible to reproduce. Serialise deploys; let them finish.
 
 ---
 
@@ -852,4 +914,4 @@ Branch `feat/claude-code-superpowers` → PR.
 
 ---
 
-*Last updated: 2026-05-20 — through Chapter 13 (skills, subagents, MCP, hooks, auto-memory).*
+*Last updated: 2026-05-20 — through Chapter 14 (CI/CD: ci.yml, e2e.yml, codeql.yml, deploy.yml with OIDC).*
