@@ -14,7 +14,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.96.0",
+    "@anthropic-ai/sdk": "^0.97.1",
     "@asteasolutions/zod-to-openapi": "^8.5.0",
     "@scalar/nextjs-api-reference": "^0.10.16",
     "better-sqlite3": "^11.0.0",
