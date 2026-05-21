@@ -3,21 +3,19 @@ import { defineConfig, devices } from "@playwright/test";
 const PORT = 3000;
 const BASE_URL = `http://localhost:${PORT}`;
 
-// Shared between the dev server (via webServer.env) and the test helpers
-// (via process.env). The DB lives under data/ which is .gitignored.
+// CI sets these via the workflow env block; local dev uses the defaults below.
+// TEST_ENV reads process.env first so the webServer and the test helpers always
+// share the same values — a mismatch causes NextAuth to reject forged cookies.
 const TEST_ENV = {
-  DATABASE_PATH: "./data/playwright.db",
-  AUTH_SECRET: "playwright-test-secret-32-chars-min-required-here",
-  NEXTAUTH_URL: BASE_URL,
-  // Real AI calls are mocked in unit tests; e2e tests that hit AI endpoints
-  // should stub the SDK at a higher level, never with a real key.
-  ANTHROPIC_API_KEY: "sk-test-do-not-use",
+  DATABASE_PATH: process.env.DATABASE_PATH ?? "./data/playwright.db",
+  AUTH_SECRET: process.env.AUTH_SECRET ?? "playwright-test-secret-32-chars-min-required-here",
+  NEXTAUTH_URL: process.env.NEXTAUTH_URL ?? BASE_URL,
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "sk-test-do-not-use",
 };
 
-// Make the same env visible to the test helpers running in the Playwright
-// worker process.
+// Backfill any keys the workflow didn't set so test helpers see the same values.
 for (const [k, v] of Object.entries(TEST_ENV)) {
-  process.env[k] = process.env[k] ?? v;
+  process.env[k] ??= v;
 }
 
 export default defineConfig({
@@ -38,7 +36,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "pnpm dev",
+    // CI: reuse the already-built .next (faster, matches prod binary).
+    // Local: dev server with HMR.
+    command: process.env.CI ? "pnpm start" : "pnpm dev",
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
