@@ -41,7 +41,7 @@ export function AddTaskForm() {
       data-testid="add-task-form"
     >
       <label htmlFor="task-title" className="block text-sm font-semibold text-neutral-900">
-        New task
+        Add a task
       </label>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
@@ -60,7 +60,7 @@ export function AddTaskForm() {
           disabled={pending}
           className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2 disabled:opacity-50"
         >
-          {pending ? "Adding…" : "Add task"}
+          {pending ? "Adding…" : "Add"}
         </button>
       </div>
       {error ? (

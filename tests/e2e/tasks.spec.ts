@@ -2,17 +2,13 @@ import { expect, test } from "@playwright/test";
 
 import { signInAsTestUser } from "../helpers/playwright-auth";
 
-test.describe.configure({ mode: "serial" });
-
-test.beforeEach(async ({ context }) => {
-  await signInAsTestUser(context, {
-    providerUserId: `tasks-${test.info().workerIndex}-${Date.now()}`,
-  });
-});
-
 test("TC-E2E-03: add a task; it appears in the open list and persists across reload", async ({
+  context,
   page,
 }) => {
+  await signInAsTestUser(context, {
+    providerUserId: `tasks-e2e03-${Date.now()}`,
+  });
   await page.goto("/app");
   const title = `Buy milk ${Date.now()}`;
 
@@ -26,7 +22,13 @@ test("TC-E2E-03: add a task; it appears in the open list and persists across rel
   await expect(page.getByText(title)).toBeVisible();
 });
 
-test("TC-E2E-04: clicking Done moves a task from open to recently-done", async ({ page }) => {
+test("TC-E2E-04: clicking Done moves a task from open to recently-done", async ({
+  context,
+  page,
+}) => {
+  await signInAsTestUser(context, {
+    providerUserId: `tasks-e2e04-${Date.now()}`,
+  });
   await page.goto("/app");
   const title = `Refactor ${Date.now()}`;
 
@@ -42,8 +44,12 @@ test("TC-E2E-04: clicking Done moves a task from open to recently-done", async (
 });
 
 test("TC-E2E-05: submitting a title with an email shows a PII error and adds nothing", async ({
+  context,
   page,
 }) => {
+  await signInAsTestUser(context, {
+    providerUserId: `tasks-e2e05-${Date.now()}`,
+  });
   await page.goto("/app");
 
   await page.getByLabel("Add a task").fill("email me at bob@bob.com");
