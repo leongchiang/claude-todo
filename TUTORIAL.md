@@ -876,9 +876,223 @@ These cannot be automated from a workflow file — they require repo admin acces
 
 ---
 
-## Chapter 15 — Deploying to Azure ⏳
+## Chapter 15 — Deploying to Azure
 
-*Will cover: creating the App Service Plan, Web App, Application Insights via `az` CLI; setting up OIDC federation between GitHub and Azure (no long-lived secrets); the deploy workflow that fires on push to `main`; verifying logs in App Insights; setting the custom domain (optional); and the moment of "it works on the public internet".*
+Everything we built works locally and passes CI. Chapter 15 is the moment we put it on the actual internet — a public URL anyone can visit, backed by a real Azure App Service running in production mode.
+
+The deploy workflow (`.github/workflows/deploy.yml`) was already written in Chapter 14. This chapter is about the one-time setup that makes that workflow succeed: Azure resources, OIDC trust, GitHub secrets, and a first green deploy run.
+
+### What we're setting up
+
+```
+GitHub Actions (deploy.yml)
+  │  exchanges an OIDC token for an Azure access token
+  ▼
+Azure App Registration (federated credential)
+  │  grants Contributor role on the resource group
+  ▼
+Azure Resource Group
+  ├── App Service Plan  (B1 Linux — ~$13/month)
+  └── Web App           (Node 22 LTS)
+                          reads secrets from App Settings
+                          serves traffic on the default .azurewebsites.net domain
+```
+
+No long-lived credentials are stored anywhere. The GitHub OIDC token is minted per-run, scoped to `environment:production`, and cannot be replayed.
+
+---
+
+### Part 1 — Create the Azure resources
+
+Install the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) if you haven't already, then:
+
+```bash
+az login
+
+# ── variables (edit these) ────────────────────────────────────────────────
+RG=rg-claude-todo
+PLAN=plan-claude-todo
+APP=claude-todo-<your-handle>   # must be globally unique — becomes <app>.azurewebsites.net
+LOCATION=eastasia               # pick the region closest to your users
+
+# ── resource group ────────────────────────────────────────────────────────
+az group create --name $RG --location $LOCATION
+
+# ── App Service plan (B1 = Basic, ~$13/mo; F1 = Free but memory-limited) ─
+az appservice plan create \
+  --name $PLAN \
+  --resource-group $RG \
+  --is-linux \
+  --sku B1
+
+# ── Web App: Node 22 LTS ──────────────────────────────────────────────────
+az webapp create \
+  --name $APP \
+  --resource-group $RG \
+  --plan $PLAN \
+  --runtime "NODE:22-lts"
+
+# Confirm the default hostname
+az webapp show \
+  --name $APP \
+  --resource-group $RG \
+  --query defaultHostName \
+  --output tsv
+# → claude-todo-<your-handle>.azurewebsites.net
+```
+
+Azure App Service Linux with the Node runtime will run `npm start` automatically, which maps to `next start` via our `package.json`. Next.js reads the `PORT` env var that Azure injects, so no additional port configuration is needed.
+
+---
+
+### Part 2 — Set up OIDC federation (no long-lived secret)
+
+This is the part that usually trips people up. We're creating an Azure **App Registration** (not the same as the Entra ID app for Microsoft sign-in), adding a federated credential that trusts GitHub Actions tokens minted for the `production` environment, and granting it Contributor on the resource group.
+
+```bash
+# ── App Registration for deployment ──────────────────────────────────────
+az ad app create --display-name "claude-todo-deploy"
+
+CLIENT_ID=$(az ad app list \
+  --display-name "claude-todo-deploy" \
+  --query "[0].appId" -o tsv)
+
+# Service principal so we can assign a role
+az ad sp create --id $CLIENT_ID
+
+# ── Federated credential ──────────────────────────────────────────────────
+# "subject" must match exactly: repo owner/name + environment name.
+# Change leongchiang to your GitHub username.
+az ad app federated-credential create \
+  --id $CLIENT_ID \
+  --parameters '{
+    "name": "github-actions-production",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:leongchiang/claude-todo:environment:production",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+
+# ── Role assignment ───────────────────────────────────────────────────────
+TENANT_ID=$(az account show --query tenantId -o tsv)
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+az role assignment create \
+  --assignee $CLIENT_ID \
+  --role Contributor \
+  --scope /subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG
+
+# Print the three values you'll need for GitHub secrets
+echo "AZURE_CLIENT_ID=$CLIENT_ID"
+echo "AZURE_TENANT_ID=$TENANT_ID"
+echo "AZURE_SUBSCRIPTION_ID=$SUBSCRIPTION_ID"
+```
+
+---
+
+### Part 3 — Configure GitHub Environments and secrets
+
+Go to your repo → **Settings → Environments → New environment** → name it `production`.
+
+Then add these **secrets** (values are sensitive — never hardcode them):
+
+| Secret | How to get it |
+|--------|---------------|
+| `AUTH_SECRET` | `openssl rand -hex 32` |
+| `GOOGLE_CLIENT_ID` | Google Cloud Console → APIs & Services → Credentials |
+| `GOOGLE_CLIENT_SECRET` | same |
+| `AZURE_AD_CLIENT_ID` | The Entra app used for Microsoft sign-in (not the deploy app) |
+| `AZURE_AD_CLIENT_SECRET` | same |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
+| `AZURE_CLIENT_ID` | From the `echo` above |
+| `AZURE_TENANT_ID` | From the `echo` above |
+| `AZURE_SUBSCRIPTION_ID` | From the `echo` above |
+
+And these **variables** (not sensitive):
+
+| Variable | Value |
+|----------|-------|
+| `NEXTAUTH_URL` | `https://<app>.azurewebsites.net` |
+| `AZURE_WEBAPP_NAME` | `claude-todo-<your-handle>` |
+| `DATABASE_PATH` | `/home/data/claude-todo.db` |
+
+> **Why `/home/data/` for `DATABASE_PATH`?** Azure App Service mounts persistent storage at `/home`. Anything under `/tmp` is ephemeral and wiped on restart. Using `/home/data/claude-todo.db` means your tasks survive deploys and restarts.
+
+---
+
+### Part 4 — OAuth provider callback URLs
+
+Both sign-in providers need to know your production URL. Update the callback URIs:
+
+**Google** (Cloud Console → OAuth 2.0 Client → Authorized redirect URIs):
+```
+https://<app>.azurewebsites.net/api/auth/callback/google
+```
+
+**Microsoft** (Entra ID → App registrations → your app → Authentication):
+```
+https://<app>.azurewebsites.net/api/auth/callback/azure-ad
+```
+
+---
+
+### Part 5 — First deploy
+
+With everything configured, push to `main` (or use the manual trigger):
+
+```bash
+git push origin main
+```
+
+Open **GitHub → Actions → Deploy** and watch the run. The four steps are:
+1. Build (`pnpm build`) — ~90 seconds
+2. Azure login (OIDC exchange) — a few seconds
+3. Deploy (`azure/webapps-deploy@v3`) — ~30 seconds
+4. Configure App Settings — a few seconds
+
+When it turns green, open `https://<app>.azurewebsites.net`. The landing page appears. Sign in with Google or Microsoft. The first sign-in creates a `users` row in `/home/data/claude-todo.db`. Add a task — it persists across page reloads and across deploys.
+
+---
+
+### What the deploy workflow does, step by step
+
+It's worth understanding what `azure/webapps-deploy@v3` actually does:
+
+1. Zips the entire workspace (`.next/`, `node_modules/`, `public/`, `package.json`, `next.config.ts`)
+2. Uploads the zip to the App Service Kudu API
+3. Azure unzips it under `/home/site/wwwroot/`
+4. App Service restarts, running the startup command (`npm start` → `next start`)
+5. `next start` reads `PORT` from the env (Azure injects 8080) and listens
+
+`better-sqlite3` is a native module compiled on `ubuntu-latest` (x64 Linux) in CI. Azure App Service Linux is also x64 Linux — the compiled `.node` binary works without recompilation.
+
+---
+
+### Watching logs
+
+```bash
+az webapp log tail \
+  --name $APP \
+  --resource-group $RG
+```
+
+Or from the Azure Portal: App Service → **Log stream**. You'll see Next.js startup output and request logs.
+
+For AI call audit logs (`logs/ai_calls.jsonl`), the file is at `/home/site/wwwroot/logs/ai_calls.jsonl` on the App Service. You can SSH in via the Portal or download it with:
+
+```bash
+az webapp ssh --name $APP --resource-group $RG
+# then: cat logs/ai_calls.jsonl | tail -20
+```
+
+---
+
+### Lessons
+
+- **OIDC federation takes 10 minutes and saves hours.** Before OIDC, the standard approach was to create a service principal, generate a secret, paste it into GitHub, remember to rotate it, and eventually get paged when it expired. OIDC eliminates all of that. The federated credential is scoped to the exact GitHub environment — a stolen token is useless outside that context.
+- **`/home` vs `/tmp` is the SQLite gotcha.** Azure App Service restarts your app on every deploy. `/tmp` is cleared on restart. If your `DATABASE_PATH` points there, you lose all data with every deploy. `/home` is the persistent disk — always use it for any file you care about.
+- **The OIDC subject string must be exact.** `repo:owner/name:environment:production` is case-sensitive and must match your GitHub repo name and environment name character for character. A typo means OIDC exchange fails with a cryptic 401. Double-check it against your actual GitHub URL.
+- **Native modules need matching architecture.** `better-sqlite3` compiles a `.node` binary at `pnpm install` time. CI (`ubuntu-latest`) and Azure App Service Linux are both x64 Linux — the binary is compatible. If you ever move to ARM (Apple Silicon local dev or Graviton runners), you'd need to build on the target arch or use a cross-compilation step.
+- **Build once, deploy the artifact.** The workflow builds in CI and deploys the result. The production app and the tested app are the same artifact — no "works in CI, breaks in prod" surprises from a second build.
 
 ---
 
@@ -914,4 +1128,4 @@ These cannot be automated from a workflow file — they require repo admin acces
 
 ---
 
-*Last updated: 2026-05-20 — through Chapter 14 (CI/CD: ci.yml, e2e.yml, codeql.yml, deploy.yml with OIDC).*
+*Last updated: 2026-05-22 — through Chapter 15 (Deploy to Azure: resource group, App Service, OIDC federation, GitHub Environment).*
