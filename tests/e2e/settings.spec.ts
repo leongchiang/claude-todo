@@ -19,7 +19,7 @@ test("TC-E2E-07: issuing a PAT shows the plaintext token once, with a copy butto
   await expect(issued).toBeVisible();
   await expect(issued).toContainText(/ctd_[A-Z2-7]{22}/);
   await expect(issued).toContainText(/save it now/i);
-  await expect(issued.getByRole("button", { name: /^Copy$/ })).toBeVisible();
+  await expect(issued.getByRole("button", { name: /copy token/i })).toBeVisible();
 
   // The new token appears in the listing too.
   const list = page.getByTestId("pat-list");
