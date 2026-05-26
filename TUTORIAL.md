@@ -1096,9 +1096,111 @@ az webapp ssh --name $APP --resource-group $RG
 
 ---
 
-## Chapter 16 — Lessons & how to fork this ⏳
+## Chapter 16 — Lessons & how to fork this
 
-*Will cover: what surprised us, what we'd do differently, total Claude API spend for the build, total time, and a short "how to fork this template" guide for anyone wanting to use ClaudeTodo as a starting point for their own AI-augmented app.*
+The build is done. This chapter is the retrospective — what we learned, what surprised us, what we'd do differently, and a guide for anyone who wants to fork this template and start their own project.
+
+---
+
+### Build stats
+
+| Metric | Value |
+|--------|-------|
+| Total commits | 49 |
+| Pull requests | 23 |
+| Calendar days | 10 (May 15 – May 24, 2026) |
+| Chapters | 16 |
+| Production deploys | Multiple (every merge to main) |
+| CI workflows | 4 (CI, E2E, CodeQL, Deploy) |
+| Test cases | 11 E2E + 30+ unit/integration |
+| Lines of application code | ~3 500 |
+| Lines of tutorial | ~1 100 |
+
+We wrote the spec, the tests, the app, the AI features, the deploy pipeline, and the full tutorial in 10 calendar days — with Claude Code doing the first draft of essentially everything.
+
+---
+
+### What worked really well
+
+**Spec-first, test-first discipline.** Having `PRODUCT_SPEC.md` and `TEST_CASES.md` agreed before writing any code meant every Claude Code prompt had a clear acceptance criterion. "Does this satisfy TC-AUTH-02?" is a much better conversation than "does this look right?". Claude Code can't read your mind — but it can read a spec.
+
+**One concern per PR.** Keeping PRs small and focused (auth, then API, then UI, then AI, then CI) made each one reviewable in 5 minutes. It also meant when something broke (and things broke) the blast radius was obvious.
+
+**CLAUDE.md as a living contract.** Putting coding conventions, AI best practices, and workflow rules in `CLAUDE.md` meant they applied consistently across every session. Rules about prompt caching, cost ceilings, PII handling, and secret management didn't need to be re-explained — Claude Code read them automatically at the start of each session.
+
+**Skills and subagents for repetitive structure.** The `/task-clarity-review` skill eliminated the back-and-forth of "is this task title specific enough?" The `api-doc-writer` subagent kept OpenAPI registration consistent without polluting the main context. These aren't clever tricks — they're just documentation that Claude Code happens to act on.
+
+**Prompt caching.** Adding `cache_control: { type: "ephemeral" }` to the AI feature system prompts took 10 minutes. In a production app with hundreds of calls per day, that's a ~90% input token reduction on every repeated call. Always do this.
+
+---
+
+### What surprised us
+
+**The E2E selector mismatch was invisible for three chapters.** The tasks E2E tests (TC-E2E-03/04/05) looked for `getByLabel("Add a task")` and `getByRole("button", { name: "Add" })`. The component had `"New task"` and `"Add task"`. Because no one ran E2E locally during those chapters, the mismatch sat undetected. Only CI caught it — and the failure looked like an auth timeout, not a label mismatch, which sent us down a two-session debugging rabbit hole. **Lesson: E2E tests are only as good as how often you run them.** Run them before every PR, not just in CI.
+
+**pnpm 11 + Node 20 = instant CI failure.** The initial CI workflows all used Node 20 LTS, which was reasonable. First CI run: `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite`. pnpm 11 uses the `node:sqlite` built-in which only exists in Node 22+. One line change per workflow, but it took reading the error carefully to find. The lesson isn't "use Node 22" — it's **check the tool's minimum runtime in its own changelog before picking a base image.**
+
+**`pnpm minimumReleaseAge` is a real supply-chain guardrail, not a quirk.** We hit it twice with Dependabot. The instinct was "this is annoying, lower it or turn it off." The better response was to understand it — pnpm is protecting against a class of supply-chain attacks where a malicious package version is published and consumed within hours before anyone notices. The right fix was a retry workflow that lets the 24-hour window pass, not removing the guard.
+
+**OIDC federation looks harder than it is.** The Azure OIDC setup (App Registration → federated credential → role assignment) sounds like a lot of steps. Written out as `az` commands it's about 10 lines. The payoff is permanent: no secrets to rotate, no expired credentials, no credential in any config file anywhere. The time-to-setup is about 10 minutes; the ongoing maintenance cost is zero.
+
+**The tutorial is part of the product.** Several times we'd finish a feature and then realise documenting *why* we made a specific decision was harder than making the decision. Keeping `TUTORIAL.md` updated in the same PR as the code forced us to articulate the reasoning while it was fresh. The chapters that were written immediately are better than the chapters written from memory.
+
+---
+
+### What we'd do differently
+
+**Set up branch protection on day one.** We relied on discipline to always go through PRs. Branch protection rules (require PR, require CI green, require up-to-date branch) enforce that at the repo level and free you from having to remember. We documented it as a manual step at the end of Chapter 14, but it should have been commit 1.
+
+**Run E2E locally before declaring a UI task done.** `pnpm test:e2e` took 3 seconds locally. Not running it after every UI change was the proximate cause of the label-mismatch bug sitting undetected for three chapters.
+
+**`output: 'standalone'` in `next.config.ts` for production deploys.** Deploying the entire workspace (including all of `node_modules`) works but uploads ~500 MB per deploy. `next build` with `output: 'standalone'` produces a ~30 MB deployable package. For a tutorial it doesn't matter. For a real app, the deploy time difference is significant.
+
+**Use Renovate instead of Dependabot for the `minimumReleaseAge` interaction.** Renovate has a native `minimumReleaseAge` setting that it respects *before* opening a PR — so it waits until the package is old enough and then opens a PR that immediately passes CI. Dependabot has no such concept. It opens the PR instantly and lets CI fail. For a project with pnpm 11's supply-chain policy, Renovate would have been the smoother choice.
+
+---
+
+### How to fork this template
+
+If you want to use ClaudeTodo as a starting point for your own AI-augmented app, here's the minimum set of changes:
+
+**1. Replace the spec and tutorial**
+- Rewrite `PRODUCT_SPEC.md` with your app's purpose and requirements
+- Clear `TUTORIAL.md` (or keep it as a reference and start a new one)
+- Update `TEST_CASES.md` to reflect your acceptance criteria
+
+**2. Update `CLAUDE.md`**
+- Section 1 (Project Overview): your app, not ClaudeTodo
+- Section 2 (Tech Stack): change anything you're swapping out
+- Section 3 (Repo Layout): update the file tree
+- Section 4 (Commands): check all commands are still correct
+- Keep Sections 5–11 mostly verbatim — they're general best practices, not ClaudeTodo-specific
+
+**3. Configure the OAuth providers**
+- Google Cloud Console: new project, new OAuth 2.0 client
+- Microsoft Entra: new app registration (or remove Microsoft sign-in entirely — just delete the `azure-ad` provider from `lib/auth.ts`)
+
+**4. Update `app/page.tsx`**
+The landing page is ClaudeTodo-branded. Replace the headline and copy with your own.
+
+**5. Set up Azure (or your preferred host)**
+Follow Chapter 15 with your own resource names. The OIDC federation setup is identical regardless of what the app does.
+
+**6. Change the PAT prefix**
+In `lib/pats.ts` the token format is `ctd_<base32>`. Change `ctd` to a prefix that identifies your app.
+
+**7. Update `README.md`**
+Replace the badges, quickstart, and description with your own.
+
+Everything else — the auth middleware, SQLite storage, API structure, OpenAPI generation, rate limiting, PII rejection, AI client, prompt caching, CI workflows — is designed to be carried over unchanged. The patterns are general; only the domain (tasks) is ClaudeTodo-specific.
+
+---
+
+### Final thought
+
+The point of this tutorial was never the todo list. It was showing that Claude Code can take a developer from "I have a spec" to "I have a deployed, tested, documented app" in a way that's readable, reproducible, and teachable.
+
+Every chapter has a `### Lessons` section that captures what broke, why, and what we'd do differently. If you read those before starting your own build, you'll avoid most of the gotchas we hit. If you hit new ones — add them to your own tutorial, and share it.
 
 ---
 
@@ -1128,4 +1230,4 @@ az webapp ssh --name $APP --resource-group $RG
 
 ---
 
-*Last updated: 2026-05-22 — through Chapter 15 (Deploy to Azure: resource group, App Service, OIDC federation, GitHub Environment).*
+*Last updated: 2026-05-26 — complete through Chapter 16 (Lessons & how to fork). Build finished.*
